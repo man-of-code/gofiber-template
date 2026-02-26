@@ -1,0 +1,28 @@
+# Binaries
+/server
+/gofiber_template
+*.exe
+
+# Secrets
+.env
+
+# Data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Go
+go.work
+go.work.sum
+vendor/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.cursor**
+docs/plans

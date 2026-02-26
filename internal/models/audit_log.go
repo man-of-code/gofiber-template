@@ -7,7 +7,7 @@ type AuditLog struct {
 	ID        uint      `gorm:"primaryKey"`
 	RequestID string    `gorm:"index;size:64"`
 	Action    string    `gorm:"size:64"`
-	ClientID  string    `gorm:"index;size:64"`
+	ClientIDHash string `gorm:"column:client_id;index;size:64"` // SHA-256 hash of client_id
 	IPAddress string    `gorm:"size:45"`
 	UserAgent string    `gorm:"size:512"`
 	Detail    string    `gorm:"type:text"`

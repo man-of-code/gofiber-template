@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"net"
-	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -32,21 +31,19 @@ func RequestID(cfg *config.Config) fiber.Handler {
 }
 
 func requestIDFromTrustedProxy(c *fiber.Ctx, trusted []*net.IPNet) bool {
+	if len(trusted) == 0 {
+		return false // no trusted proxies configured: never trust incoming ID
+	}
 	if c.Get("X-Request-ID") == "" {
-		return false
+		return false // nothing to propagate
 	}
-	xff := c.Get("X-Forwarded-For")
-	if xff == "" {
-		return false // no trusted proxies configured = never trust incoming ID
-	}
-	parts := strings.Split(xff, ",")
-	proxyIP := strings.TrimSpace(parts[len(parts)-1])
-	ip := net.ParseIP(proxyIP)
-	if ip == nil {
+	// Check whether the direct connection IP is in the trusted set
+	directIP := net.ParseIP(c.IP())
+	if directIP == nil {
 		return false
 	}
 	for _, n := range trusted {
-		if n.Contains(ip) {
+		if n.Contains(directIP) {
 			return true
 		}
 	}

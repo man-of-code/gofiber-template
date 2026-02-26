@@ -24,7 +24,11 @@ import (
 
 func main() {
 	envutil.Load()
-	cryptoService, err := services.NewCryptoService()
+	appID := os.Getenv("APP_ID")
+	if appID == "" {
+		appID = "gofiber-template-v1"
+	}
+	cryptoService, err := services.NewCryptoService(appID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

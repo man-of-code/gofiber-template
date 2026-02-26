@@ -24,7 +24,7 @@ func setupAuthService(t *testing.T) (*services.AuthService, func()) {
 	if err := gormDB.AutoMigrate(&models.Client{}); err != nil {
 		t.Fatal(err)
 	}
-	cryptoService, err := services.NewCryptoService()
+	cryptoService, err := services.NewCryptoService("test-app-v1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestAuthService_ValidateCredentials_SuspendedClientFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, _ := auth.ListClients()
+	views, _, _ := auth.ListClients(1, 100)
 	if len(views) == 0 {
 		t.Fatal("no clients listed")
 	}
@@ -118,7 +118,7 @@ func TestAuthService_GetClient_ReturnsDecryptedView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, err := auth.ListClients()
+	views, _, err := auth.ListClients(1, 100)
 	if err != nil || len(views) == 0 {
 		t.Fatal("list clients", err)
 	}
@@ -143,7 +143,7 @@ func TestAuthService_DeleteClient_RemovesClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views, _ := auth.ListClients()
+	views, _, _ := auth.ListClients(1, 100)
 	if len(views) == 0 {
 		t.Fatal("no clients")
 	}

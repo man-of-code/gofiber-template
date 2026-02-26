@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"bytes"
 	"encoding/hex"
 
 	"github.com/gofiber/fiber/v2"
@@ -36,8 +35,8 @@ func PayloadCrypto(cryptoService services.PayloadCryptor, requireEncrypted bool)
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "decryption failed")
 		}
-		c.Request().SetBodyStream(bytes.NewReader(pt), len(pt))
-		c.Request().Header.SetContentType(fiber.MIMEApplicationJSON)
+		c.Request().SetBody(pt)
+		c.Request().Header.SetContentTypeBytes([]byte(fiber.MIMEApplicationJSON))
 		c.Locals("encrypted_response", true)
 		return c.Next()
 	}

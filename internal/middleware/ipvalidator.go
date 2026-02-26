@@ -16,14 +16,12 @@ func IPValidator(cfg *config.Config) fiber.Handler {
 	if cfg == nil || cfg.IPMode == "off" {
 		return func(c *fiber.Ctx) error { return c.Next() }
 	}
-	trustedProxies := netutil.ParseCIDRs(cfg.TrustedProxies)
 	cache := &ipValidatorCache{
 		allowed: netutil.ParseCIDRs(cfg.GlobalAllowedIPs),
 		blocked: netutil.ParseCIDRs(cfg.GlobalBlockedIPs),
 	}
 	return func(c *fiber.Ctx) error {
-		ip := netutil.GetClientIP(c.IP(), c.Get("X-Forwarded-For"), trustedProxies, cfg.TrustedProxyDepth)
-		c.Locals("real_ip", ip)
+		ip := ClientIP(c) // Use the single canonical source — already set by RealIP middleware
 		allowed := cache.isAllowed(ip)
 		blocked := cache.isBlocked(ip)
 		switch cfg.IPMode {

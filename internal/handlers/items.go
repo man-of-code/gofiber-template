@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"strings"
+
 	"github.com/gofiber/fiber/v2"
 
 	"gofiber_template/internal/services"
@@ -66,6 +68,9 @@ func (h *ItemsHandler) Create(c *fiber.Ctx) error {
 	}
 	errs := &validator.Errors{}
 	validator.ValidateRequiredString(errs, "name", req.Name)
+	if len(strings.TrimSpace(req.Name)) > 255 {
+		errs.Add("name", "must be 255 characters or fewer")
+	}
 	if errs.HasAny() {
 		return errs
 	}
@@ -93,6 +98,9 @@ func (h *ItemsHandler) Update(c *fiber.Ctx) error {
 	}
 	errs := &validator.Errors{}
 	validator.ValidateRequiredString(errs, "name", req.Name)
+	if len(strings.TrimSpace(req.Name)) > 255 {
+		errs.Add("name", "must be 255 characters or fewer")
+	}
 	if errs.HasAny() {
 		return errs
 	}

@@ -47,7 +47,7 @@ func (s *ItemsService) List(page, limit int) (*PaginatedItems, error) {
 func (s *ItemsService) Get(id uint) (*models.Item, error) {
 	var item models.Item
 	if err := s.DB.First(&item, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrItemNotFound
 		}
 		return nil, err
@@ -66,7 +66,7 @@ func (s *ItemsService) Create(name string) (*models.Item, error) {
 func (s *ItemsService) Update(id uint, name string) (*models.Item, error) {
 	var item models.Item
 	if err := s.DB.First(&item, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrItemNotFound
 		}
 		return nil, err

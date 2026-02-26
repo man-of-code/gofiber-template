@@ -151,11 +151,32 @@ func TestRateLimiter_Allow_ReturnsRemaining(t *testing.T) {
 	}
 }
 
-// Test that cleanup doesn't panic (runs in background when newRateLimiter is used).
+// Test that cleanup removes stale entries.
 func TestRateLimiter_CleanupRemovesStaleEntries(t *testing.T) {
-	rl := newRateLimiter(10, 3600000)
+	rl := newRateLimiter(10, time.Minute)
+	defer rl.Stop()
 	rl.allow("k1")
 	rl.allow("k2")
+
+	// Manually backdate the entries so cleanup treats them as stale (older than 2*window).
+	rl.mu.Lock()
+	now := time.Now().Unix()
+	windowSeconds := int64(time.Minute.Seconds())
+	oldTS := now - windowSeconds*2 - 1
+	for _, e := range rl.entries {
+		for ts := range e.counts {
+			delete(e.counts, ts)
+		}
+		e.counts[oldTS] = 1
+	}
+	rl.mu.Unlock()
+
 	rl.cleanup()
-	// After cleanup, entries might still be there (window not expired). Just ensure no panic.
+
+	rl.mu.Lock()
+	n := len(rl.entries)
+	rl.mu.Unlock()
+	if n != 0 {
+		t.Errorf("expected all entries evicted after cleanup, got %d", n)
+	}
 }

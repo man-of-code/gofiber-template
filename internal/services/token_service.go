@@ -163,7 +163,7 @@ func (s *TokenService) RefreshToken(refreshToken string, ip string, userAgent st
 
 	var tok models.Token
 	if err := s.DB.Where("refresh_token_hash = ?", refreshHashHex).First(&tok).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrTokenNotFound
 		}
 		return nil, err
@@ -253,7 +253,7 @@ func (s *TokenService) RevokeToken(accessToken string, bodyToken string, ip stri
 		refreshHashHex := hex.EncodeToString(refreshHash[:])
 		var tok models.Token
 		if err := s.DB.Where("refresh_token_hash = ?", refreshHashHex).First(&tok).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrTokenNotFound
 			}
 			return err
@@ -277,13 +277,20 @@ func (s *TokenService) RevokeToken(accessToken string, bodyToken string, ip stri
 
 // RevokeAllForClient revokes all tokens for a client (admin action).
 func (s *TokenService) RevokeAllForClient(clientDBID uint) error {
+	return s.RevokeAllForClientTx(s.DB, clientDBID)
+}
+
+// RevokeAllForClientTx revokes all tokens for a client within a transaction.
+func (s *TokenService) RevokeAllForClientTx(tx *gorm.DB, clientDBID uint) error {
 	now := time.Now()
 	var tokens []models.Token
-	s.DB.Where("client_db_id = ? AND revoked = ?", clientDBID, false).Find(&tokens)
+	if err := tx.Where("client_db_id = ? AND revoked = ?", clientDBID, false).Find(&tokens).Error; err != nil {
+		return err
+	}
 	if len(tokens) == 0 {
 		return nil
 	}
-	if err := s.DB.Model(&models.Token{}).
+	if err := tx.Model(&models.Token{}).
 		Where("client_db_id = ? AND revoked = ?", clientDBID, false).
 		Updates(map[string]interface{}{
 			"revoked": true, "revoked_at": now, "revoked_reason": "admin_revoke_all",

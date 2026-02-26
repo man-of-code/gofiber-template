@@ -23,7 +23,7 @@ func setupTokenService(t *testing.T) (*services.TokenService, *services.AuthServ
 	if err := gormDB.AutoMigrate(&models.Client{}, &models.Token{}); err != nil {
 		t.Fatal(err)
 	}
-	cryptoService, err := services.NewCryptoService()
+	cryptoService, err := services.NewCryptoService("test-app-v1")
 	if err != nil {
 		t.Fatal(err)
 	}

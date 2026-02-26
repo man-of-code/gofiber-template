@@ -16,24 +16,26 @@ func Load(paths ...string) {
 		if err != nil {
 			continue
 		}
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
+		func() {
+			defer f.Close()
+			sc := bufio.NewScanner(f)
+			for sc.Scan() {
+				line := strings.TrimSpace(sc.Text())
+				if line == "" || strings.HasPrefix(line, "#") {
+					continue
+				}
+				idx := strings.Index(line, "=")
+				if idx == -1 {
+					continue
+				}
+				key := strings.TrimSpace(line[:idx])
+				val := strings.TrimSpace(line[idx+1:])
+				val = strings.Trim(val, "\"'")
+				if key != "" && os.Getenv(key) == "" {
+					os.Setenv(key, val)
+				}
 			}
-			idx := strings.Index(line, "=")
-			if idx == -1 {
-				continue
-			}
-			key := strings.TrimSpace(line[:idx])
-			val := strings.TrimSpace(line[idx+1:])
-			val = strings.Trim(val, "\"'")
-			if key != "" && os.Getenv(key) == "" {
-				os.Setenv(key, val)
-			}
-		}
-		f.Close()
+		}()
 		return
 	}
 }

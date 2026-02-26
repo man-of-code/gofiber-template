@@ -4,10 +4,11 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 
 	"gofiber_template/internal/config"
-	"gofiber_template/internal/services"
 	"gofiber_template/internal/middleware"
+	"gofiber_template/internal/services"
 	"gofiber_template/internal/validator"
 )
 
@@ -16,6 +17,7 @@ type AuthHandler struct {
 	AuthService  services.ClientManager
 	TokenService services.TokenIssuer
 	Config       *config.Config
+	DB           *gorm.DB
 }
 
 // RegisterClientRequest is the JSON body for client registration.
@@ -180,9 +182,13 @@ func toClientResponse(view *services.ClientView) *ClientResponse {
 	}
 }
 
-// ListClients returns all clients (admin only).
+// ListClients returns clients (admin only) with pagination.
 func (h *AuthHandler) ListClients(c *fiber.Ctx) error {
-	views, err := h.AuthService.ListClients()
+	page, limit, err := validator.ParsePagination(c.Query("page"), c.Query("limit"), 20, 100)
+	if err != nil {
+		return err
+	}
+	views, total, err := h.AuthService.ListClients(page, limit)
 	if err != nil {
 		return err
 	}
@@ -190,7 +196,15 @@ func (h *AuthHandler) ListClients(c *fiber.Ctx) error {
 	for _, v := range views {
 		responses = append(responses, toClientResponse(v))
 	}
-	return c.JSON(responses)
+	return c.JSON(fiber.Map{
+		"data": responses,
+		"meta": fiber.Map{
+			"page":       page,
+			"limit":      limit,
+			"total":      total,
+			"total_page": (total + int64(limit) - 1) / int64(limit),
+		},
+	})
 }
 
 // GetClient returns a single client by database ID (admin only).
@@ -254,10 +268,16 @@ func (h *AuthHandler) DeleteClient(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if err := h.TokenService.RevokeAllForClient(id); err != nil {
-		return err
-	}
-	if err := h.AuthService.DeleteClient(id); err != nil {
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := h.TokenService.RevokeAllForClientTx(tx, id); err != nil {
+			return err
+		}
+		if err := h.AuthService.DeleteClientTx(tx, id); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
 		if err == services.ErrClientNotFound {
 			return fiber.NewError(fiber.StatusNotFound, "not found")
 		}

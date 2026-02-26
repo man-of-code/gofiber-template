@@ -118,10 +118,10 @@ func (a *AuditLogger) Middleware() fiber.Handler {
 			"severity":   severity,
 		})
 		entry := models.AuditLog{
-			RequestID: requestID,
-			Action:    action,
-			ClientID:  clientIDHash,
-			IPAddress: ClientIP(c),
+			RequestID:   requestID,
+			Action:      action,
+			ClientIDHash: clientIDHash,
+			IPAddress:   ClientIP(c),
 			UserAgent: c.Get("User-Agent"),
 			Detail:    string(detailJSON),
 			CreatedAt: time.Now(),

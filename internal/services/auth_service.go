@@ -21,6 +21,7 @@ import (
 
 const secretSize = 64
 const bcryptCost = 12
+const maxFailureTrackerEntries = 10000
 
 var (
 	ErrClientNotFound  = errors.New("client not found")
@@ -64,11 +65,33 @@ func (t *failureTracker) inc(key string) bool {
 	defer t.mu.Unlock()
 	e, ok := t.counts[key]
 	if !ok || now.Sub(e.windowAt) > t.window {
+		if len(t.counts) >= maxFailureTrackerEntries {
+			t.evictStaleLocked(now)
+		}
+		if len(t.counts) >= maxFailureTrackerEntries {
+			return false // drop tracking under pressure
+		}
 		t.counts[key] = &failCount{count: 1, windowAt: now}
 		return false
 	}
 	e.count++
 	return e.count >= t.limit
+}
+
+// evictStaleLocked removes entries whose window has expired. Caller must hold t.mu.
+func (t *failureTracker) evictStaleLocked(now time.Time) {
+	for k, e := range t.counts {
+		if now.Sub(e.windowAt) > t.window*2 {
+			delete(t.counts, k)
+		}
+	}
+}
+
+// sweep removes stale entries. Safe to call from a background goroutine.
+func (t *failureTracker) sweep() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.evictStaleLocked(time.Now())
 }
 
 func (t *failureTracker) reset(key string) {
@@ -86,10 +109,17 @@ type AuthService struct {
 
 // NewAuthService constructs an AuthService with failure tracking.
 func NewAuthService(db *gorm.DB, crypto *CryptoService) *AuthService {
+	ft := newFailureTracker(5*time.Minute, 10)
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			ft.sweep()
+		}
+	}()
 	return &AuthService{
 		DB:            db,
 		CryptoService: crypto,
-		failures:      newFailureTracker(5*time.Minute, 10),
+		failures:      ft,
 	}
 }
 
@@ -152,7 +182,7 @@ func (s *AuthService) ValidateCredentials(clientIDPlain string, clientSecret str
 	hash := clientIDHash(clientIDPlain)
 	var client models.Client
 	if err := s.DB.Where("client_id_hash = ?", hash).First(&client).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			if dummyHash != nil {
 				_ = bcrypt.CompareHashAndPassword(dummyHash, []byte("dummy"))
 			}
@@ -225,17 +255,22 @@ type ClientView struct {
 	UpdatedAt  time.Time
 }
 
-// ListClients returns all clients with decrypted client_id.
-func (s *AuthService) ListClients() ([]*ClientView, error) {
+// ListClients returns clients with decrypted client_id, paginated.
+func (s *AuthService) ListClients(page, limit int) ([]*ClientView, int64, error) {
+	var total int64
+	if err := s.DB.Model(&models.Client{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	offset := (page - 1) * limit
 	var clients []models.Client
-	if err := s.DB.Order("id DESC").Find(&clients).Error; err != nil {
-		return nil, err
+	if err := s.DB.Order("id DESC").Limit(limit).Offset(offset).Find(&clients).Error; err != nil {
+		return nil, 0, err
 	}
 	views := make([]*ClientView, 0, len(clients))
 	for _, c := range clients {
 		clientID, err := s.CryptoService.DecryptClientID(c.ClientIDEnc)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		views = append(views, &ClientView{
 			ID:         c.ID,
@@ -247,14 +282,14 @@ func (s *AuthService) ListClients() ([]*ClientView, error) {
 			UpdatedAt:  c.UpdatedAt,
 		})
 	}
-	return views, nil
+	return views, total, nil
 }
 
 // GetClient returns one client by ID with decrypted client_id.
 func (s *AuthService) GetClient(id uint) (*ClientView, error) {
 	var client models.Client
 	if err := s.DB.First(&client, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrClientNotFound
 		}
 		return nil, err
@@ -278,7 +313,7 @@ func (s *AuthService) GetClient(id uint) (*ClientView, error) {
 func (s *AuthService) UpdateClient(id uint, name string, allowedIPs []string, status string) (*ClientView, error) {
 	var client models.Client
 	if err := s.DB.First(&client, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrClientNotFound
 		}
 		return nil, err
@@ -307,7 +342,12 @@ func (s *AuthService) UpdateClient(id uint, name string, allowedIPs []string, st
 
 // DeleteClient removes a client (soft delete via gorm.DeletedAt).
 func (s *AuthService) DeleteClient(id uint) error {
-	res := s.DB.Delete(&models.Client{}, id)
+	return s.DeleteClientTx(s.DB, id)
+}
+
+// DeleteClientTx removes a client within a transaction.
+func (s *AuthService) DeleteClientTx(tx *gorm.DB, id uint) error {
+	res := tx.Delete(&models.Client{}, id)
 	if res.Error != nil {
 		return res.Error
 	}

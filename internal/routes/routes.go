@@ -32,6 +32,7 @@ func Register(app *fiber.App, deps *Dependencies) {
 		AuthService:  deps.AuthService,
 		TokenService: deps.TokenService,
 		Config:       deps.Config,
+		DB:           deps.DB,
 	}
 	auth.Post("/token", authHandler.IssueToken)
 	auth.Post("/token/refresh", authHandler.RefreshToken)

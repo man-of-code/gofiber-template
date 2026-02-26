@@ -10,7 +10,7 @@ import (
 func BenchmarkEncryptDecryptPayload(b *testing.B) {
 	os.Setenv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	defer os.Unsetenv("ENCRYPTION_KEY")
-	cs, err := services.NewCryptoService()
+	cs, err := services.NewCryptoService("test-app-v1")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func BenchmarkEncryptDecryptPayload(b *testing.B) {
 func BenchmarkEncryptDecryptClientID(b *testing.B) {
 	os.Setenv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	defer os.Unsetenv("ENCRYPTION_KEY")
-	cs, err := services.NewCryptoService()
+	cs, err := services.NewCryptoService("test-app-v1")
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -38,21 +38,23 @@ func run(w io.Writer, args []string) error {
 }
 
 func printGeneratedSecrets(w io.Writer) error {
+	// All secrets at 256-bit (32 bytes) entropy minimum
 	encKey, err := randomHex(32)
 	if err != nil {
 		return err
 	}
-	jwtSecret, err := randomHex(64)
+	jwtSecret, err := randomHex(64) // 512-bit: JWT secrets benefit from extra margin
 	if err != nil {
 		return err
 	}
-	adminKey, err := randomHex(16)
+	adminKey, err := randomHex(32) // 256-bit: consistent with ENCRYPTION_KEY
 	if err != nil {
 		return err
 	}
 
 	var buf bytes.Buffer
-	fmt.Fprintln(&buf, "Generated secrets (copy into your .env):")
+	fmt.Fprintln(&buf, "Generated secrets — copy into .env:")
+	fmt.Fprintln(&buf, "# All values are cryptographically random. Do not reuse across deployments.")
 	fmt.Fprintf(&buf, "ENCRYPTION_KEY=%s\n", encKey)
 	fmt.Fprintf(&buf, "JWT_SECRET=%s\n", jwtSecret)
 	fmt.Fprintf(&buf, "ADMIN_MASTER_KEY=%s\n", adminKey)
@@ -89,8 +91,8 @@ func validateEnv(w io.Writer, path string) error {
 	}
 
 	admin := values["ADMIN_MASTER_KEY"]
-	if len(admin) == 0 {
-		issues = append(issues, "ADMIN_MASTER_KEY must be non-empty")
+	if len(admin) < 64 {
+		issues = append(issues, "ADMIN_MASTER_KEY should be 64 hex characters (32 bytes) for 256-bit entropy")
 	}
 
 	if len(issues) == 0 {

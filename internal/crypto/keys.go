@@ -18,11 +18,11 @@ const (
 	ContextPayloadTransport = "payload-transport"
 )
 
-var appSalt = []byte("hanushield-v1")
-
 // deriveKey derives a 32-byte key from master using HKDF-SHA256.
-func deriveKey(master []byte, context string) ([]byte, error) {
-	hkdf := hkdf.New(sha256.New, master, appSalt, []byte(context))
+// appID MUST be unique per application (e.g. "myapp-v1") for key separation.
+func deriveKey(master []byte, appID string, context string) ([]byte, error) {
+	salt := []byte(appID)
+	hkdf := hkdf.New(sha256.New, master, salt, []byte(context))
 	key := make([]byte, keySize)
 	if _, err := hkdf.Read(key); err != nil {
 		return nil, err
@@ -47,16 +47,16 @@ func MasterKey() ([]byte, error) {
 }
 
 // ClientAtRestKey derives the key for encrypting client_id at rest.
-func ClientAtRestKey(master []byte) ([]byte, error) {
-	return deriveKey(master, ContextClientAtRest)
+func ClientAtRestKey(master []byte, appID string) ([]byte, error) {
+	return deriveKey(master, appID, ContextClientAtRest)
 }
 
 // TokenAtRestKey derives the key for token-related encryption.
-func TokenAtRestKey(master []byte) ([]byte, error) {
-	return deriveKey(master, ContextTokenAtRest)
+func TokenAtRestKey(master []byte, appID string) ([]byte, error) {
+	return deriveKey(master, appID, ContextTokenAtRest)
 }
 
 // PayloadTransportKey derives the key for request/response payload encryption.
-func PayloadTransportKey(master []byte) ([]byte, error) {
-	return deriveKey(master, ContextPayloadTransport)
+func PayloadTransportKey(master []byte, appID string) ([]byte, error) {
+	return deriveKey(master, appID, ContextPayloadTransport)
 }

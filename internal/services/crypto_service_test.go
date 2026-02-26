@@ -10,7 +10,7 @@ import (
 func TestCryptoService_EncryptDecryptPayload_Roundtrip(t *testing.T) {
 	os.Setenv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	defer os.Unsetenv("ENCRYPTION_KEY")
-	cs, err := services.NewCryptoService()
+	cs, err := services.NewCryptoService("test-app-v1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestCryptoService_EncryptDecryptPayload_Roundtrip(t *testing.T) {
 func TestCryptoService_EncryptDecryptClientID_Roundtrip(t *testing.T) {
 	os.Setenv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
 	defer os.Unsetenv("ENCRYPTION_KEY")
-	cs, err := services.NewCryptoService()
+	cs, err := services.NewCryptoService("test-app-v1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestCryptoService_EncryptDecryptClientID_Roundtrip(t *testing.T) {
 
 func TestCryptoService_NewCryptoService_NoKey(t *testing.T) {
 	os.Unsetenv("ENCRYPTION_KEY")
-	_, err := services.NewCryptoService()
+	_, err := services.NewCryptoService("test-app-v1")
 	if err == nil {
 		t.Error("expected error when ENCRYPTION_KEY not set")
 	}

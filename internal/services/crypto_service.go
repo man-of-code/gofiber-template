@@ -14,16 +14,17 @@ type CryptoService struct {
 }
 
 // NewCryptoService creates a CryptoService. Returns error if ENCRYPTION_KEY is not set.
-func NewCryptoService() (*CryptoService, error) {
+// appID must be unique per application (e.g. from APP_ID env) for key derivation separation.
+func NewCryptoService(appID string) (*CryptoService, error) {
 	master, err := crypto.MasterKey()
 	if err != nil {
 		return nil, err
 	}
-	clientKey, err := crypto.ClientAtRestKey(master)
+	clientKey, err := crypto.ClientAtRestKey(master, appID)
 	if err != nil {
 		return nil, err
 	}
-	payloadKey, err := crypto.PayloadTransportKey(master)
+	payloadKey, err := crypto.PayloadTransportKey(master, appID)
 	if err != nil {
 		return nil, err
 	}

@@ -12,13 +12,14 @@ import (
 
 // RateLimiter implements sliding-window rate limiting per key (IP or client_id).
 type RateLimiter struct {
-	mu       sync.RWMutex
+	mu       sync.Mutex
 	entries  map[string]*rateEntry
 	limit    int
 	window   time.Duration
 	banLimit int // exceed this multiple of limit to get banned
 	banDur   time.Duration
 	banned   map[string]time.Time
+	stop     chan struct{}
 }
 
 type rateEntry struct {
@@ -39,14 +40,31 @@ func newRateLimiter(limit int, window time.Duration) *RateLimiter {
 		banLimit: banLimit,
 		banDur:   10 * time.Minute,
 		banned:   make(map[string]time.Time),
+		stop:     make(chan struct{}),
 	}
 	go func() {
 		t := time.NewTicker(window)
-		for range t.C {
-			rl.cleanup()
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				rl.cleanup()
+			case <-rl.stop:
+				return
+			}
 		}
 	}()
 	return rl
+}
+
+// Stop stops the background cleanup goroutine. Safe to call once.
+func (r *RateLimiter) Stop() {
+	select {
+	case <-r.stop:
+		return
+	default:
+		close(r.stop)
+	}
 }
 
 func (r *RateLimiter) allow(key string) (allowed bool, remaining int, retryAfter int) {

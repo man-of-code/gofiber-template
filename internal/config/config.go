@@ -11,6 +11,7 @@ import (
 type Config struct {
 	DBPath          string
 	Port            int
+	AppID           string        // unique per app for HKDF key separation (e.g. "myapp-v1")
 	AdminMasterKey  string        // for bootstrapping clients
 	JWTSecret       string        // min 64 bytes for HMAC-SHA256
 	AccessTokenTTL  time.Duration // default 15m
@@ -94,6 +95,7 @@ func Load() *Config {
 	return &Config{
 		DBPath:            dbPath,
 		Port:              port,
+		AppID:             os.Getenv("APP_ID"),
 		AdminMasterKey:    os.Getenv("ADMIN_MASTER_KEY"),
 		JWTSecret:         os.Getenv("JWT_SECRET"),
 		AccessTokenTTL:    accessTTL,

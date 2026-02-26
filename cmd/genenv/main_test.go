@@ -31,7 +31,7 @@ func TestValidateModeWithValidEnv(t *testing.T) {
 	content := strings.Join([]string{
 		"ENCRYPTION_KEY=" + strings.Repeat("a", 64),
 		"JWT_SECRET=" + strings.Repeat("b", 128),
-		"ADMIN_MASTER_KEY=admin-key",
+		"ADMIN_MASTER_KEY=" + strings.Repeat("c", 64),
 	}, "\n") + "\n"
 
 	if err := os.WriteFile(envPath, []byte(content), 0o600); err != nil {

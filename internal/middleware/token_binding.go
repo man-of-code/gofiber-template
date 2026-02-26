@@ -16,7 +16,8 @@ func TokenBinding(tokenValidator services.TokenValidator) fiber.Handler {
 		}
 		jwtClaims, ok := claims.(*services.JWTClaims)
 		if !ok {
-			return c.Next()
+			// Unexpected type in claims local — treat as auth failure, not pass-through
+			return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 		}
 		ip := ClientIP(c)
 		userAgent := c.Get("User-Agent")

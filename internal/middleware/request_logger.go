@@ -41,7 +41,7 @@ func RequestLogger(logger *slog.Logger) fiber.Handler {
 		logger.Log(c.Context(), level, "http_request",
 			"request_id", requestID,
 			"client_id", clientID,
-			"ip", c.IP(),
+			"ip", ClientIP(c),
 			"method", c.Method(),
 			"path", c.Path(),
 			"status", status,

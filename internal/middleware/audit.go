@@ -114,7 +114,7 @@ func (a *AuditLogger) Middleware() fiber.Handler {
 			RequestID: requestID,
 			Action:    action,
 			ClientID:  clientID,
-			IPAddress: c.IP(),
+			IPAddress: ClientIP(c),
 			UserAgent: c.Get("User-Agent"),
 			Detail:    string(detailJSON),
 			CreatedAt: time.Now(),

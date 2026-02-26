@@ -8,7 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
+
+	"gofiber_template/internal/envutil"
 )
 
 func main() {
@@ -74,7 +75,7 @@ func validateEnv(w io.Writer, path string) error {
 		return err
 	}
 
-	values := parseEnv(string(data))
+	values := envutil.Parse(string(data))
 	var issues []string
 
 	enc := values["ENCRYPTION_KEY"]
@@ -102,23 +103,4 @@ func validateEnv(w io.Writer, path string) error {
 		fmt.Fprintln(w, "- ", iss)
 	}
 	return fmt.Errorf("invalid env secrets")
-}
-
-func parseEnv(content string) map[string]string {
-	values := make(map[string]string)
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		val := strings.TrimSpace(parts[1])
-		values[key] = val
-	}
-	return values
 }

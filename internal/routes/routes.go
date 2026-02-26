@@ -11,12 +11,15 @@ import (
 )
 
 // Dependencies holds services needed for route registration.
+// Interface types enable testing with mocks (Task 17).
 type Dependencies struct {
-	DB            *gorm.DB
-	Config        *config.Config
-	CryptoService *services.CryptoService
-	AuthService   *services.AuthService
-	TokenService  *services.TokenService
+	DB             *gorm.DB
+	Config         *config.Config
+	CryptoService  services.PayloadCryptor
+	AuthService    services.ClientManager
+	TokenService   services.TokenIssuer
+	TokenValidator services.TokenValidator
+	ItemsService   *services.ItemsService
 }
 
 // Register mounts all routes on the Fiber app.
@@ -33,12 +36,12 @@ func Register(app *fiber.App, deps *Dependencies) {
 	auth.Post("/token", authHandler.IssueToken)
 	auth.Post("/token/refresh", authHandler.RefreshToken)
 	auth.Post("/token/revoke",
-		middleware.JWTAuth(deps.TokenService),
-		middleware.TokenBinding(deps.TokenService),
+		middleware.JWTAuth(deps.TokenValidator),
+		middleware.TokenBinding(deps.TokenValidator),
 		authHandler.RevokeToken)
 
 	// Admin (X-Admin-Key required)
-	admin := app.Group("/admin")
+	admin := app.Group("/admin", middleware.AdminAuth(deps.Config))
 	admin.Post("/clients", authHandler.RegisterClient)
 	admin.Post("/clients/:id/revoke-all", authHandler.RevokeAllClientTokens)
 	admin.Get("/clients", authHandler.ListClients)
@@ -48,10 +51,10 @@ func Register(app *fiber.App, deps *Dependencies) {
 
 	// Authenticated API (JWT + TokenBinding + APIRateLimit)
 	api := app.Group("/api",
-		middleware.JWTAuth(deps.TokenService),
-		middleware.TokenBinding(deps.TokenService),
+		middleware.JWTAuth(deps.TokenValidator),
+		middleware.TokenBinding(deps.TokenValidator),
 		middleware.APIRateLimit(deps.Config))
-	itemsHandler := &handlers.ItemsHandler{DB: deps.DB}
+	itemsHandler := &handlers.ItemsHandler{Service: deps.ItemsService}
 	api.Get("/items", itemsHandler.List)
 	api.Get("/items/:id", itemsHandler.Get)
 	api.Post("/items", itemsHandler.Create)

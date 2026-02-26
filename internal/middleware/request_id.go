@@ -8,13 +8,14 @@ import (
 	"github.com/google/uuid"
 
 	"gofiber_template/internal/config"
+	"gofiber_template/internal/netutil"
 )
 
 // RequestID generates or propagates X-Request-ID for each request.
 func RequestID(cfg *config.Config) fiber.Handler {
 	var trusted []*net.IPNet
 	if cfg != nil {
-		trusted = parseCIDRs(cfg.TrustedProxies)
+		trusted = netutil.ParseCIDRs(cfg.TrustedProxies)
 	}
 	return func(c *fiber.Ctx) error {
 		reqID := ""

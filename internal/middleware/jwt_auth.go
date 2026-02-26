@@ -9,7 +9,7 @@ import (
 )
 
 // JWTAuth returns middleware that validates JWT and stores claims in Locals.
-func JWTAuth(tokenService *services.TokenService) fiber.Handler {
+func JWTAuth(tokenValidator services.TokenValidator) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		auth := c.Get("Authorization")
 		if auth == "" {
@@ -23,7 +23,7 @@ func JWTAuth(tokenService *services.TokenService) fiber.Handler {
 		if accessToken == "" {
 			return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 		}
-		claims, err := tokenService.ParseJWT(accessToken)
+		claims, err := tokenValidator.ParseJWT(accessToken)
 		if err != nil {
 			return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 		}

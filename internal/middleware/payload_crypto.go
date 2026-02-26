@@ -10,10 +10,18 @@ import (
 )
 
 // PayloadCrypto returns middleware that decrypts request body when X-Encrypted-Payload: true.
-// If decryption fails or CryptoService is nil, returns 400.
-func PayloadCrypto(cryptoService *services.CryptoService) fiber.Handler {
+// If decryption fails or cryptoService is nil, returns 400.
+func PayloadCrypto(cryptoService services.PayloadCryptor, requireEncrypted bool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if cryptoService == nil || c.Get("X-Encrypted-Payload") != "true" {
+		isEncrypted := c.Get("X-Encrypted-Payload") == "true"
+		isMutating := c.Method() == "POST" || c.Method() == "PUT" ||
+			c.Method() == "PATCH" || c.Method() == "DELETE"
+
+		if requireEncrypted && isMutating && !isEncrypted && len(c.Body()) > 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "encrypted payload required")
+		}
+
+		if cryptoService == nil || !isEncrypted {
 			return c.Next()
 		}
 		body := c.Body()
@@ -29,14 +37,14 @@ func PayloadCrypto(cryptoService *services.CryptoService) fiber.Handler {
 			return fiber.NewError(fiber.StatusBadRequest, "decryption failed")
 		}
 		c.Request().SetBodyStream(bytes.NewReader(pt), len(pt))
-	c.Request().Header.SetContentType(fiber.MIMEApplicationJSON)
+		c.Request().Header.SetContentType(fiber.MIMEApplicationJSON)
 		c.Locals("encrypted_response", true)
 		return c.Next()
 	}
 }
 
 // EncryptResponse encrypts the response body if the request was encrypted.
-func EncryptResponse(cryptoService *services.CryptoService) fiber.Handler {
+func EncryptResponse(cryptoService services.PayloadCryptor) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if err := c.Next(); err != nil {
 			return err

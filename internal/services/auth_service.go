@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
+	"gofiber_template/internal/netutil"
 	"gofiber_template/internal/models"
 )
 
@@ -240,7 +241,7 @@ func (s *AuthService) ListClients() ([]*ClientView, error) {
 			ID:         c.ID,
 			Name:       c.Name,
 			ClientID:   clientID,
-			AllowedIPs: ParseAllowedIPs(c.AllowedIPs),
+			AllowedIPs: netutil.ParseAllowedIPs(c.AllowedIPs),
 			Status:     c.Status,
 			CreatedAt:  c.CreatedAt,
 			UpdatedAt:  c.UpdatedAt,
@@ -266,7 +267,7 @@ func (s *AuthService) GetClient(id uint) (*ClientView, error) {
 		ID:         client.ID,
 		Name:       client.Name,
 		ClientID:   clientID,
-		AllowedIPs: ParseAllowedIPs(client.AllowedIPs),
+		AllowedIPs: netutil.ParseAllowedIPs(client.AllowedIPs),
 		Status:     client.Status,
 		CreatedAt:  client.CreatedAt,
 		UpdatedAt:  client.UpdatedAt,

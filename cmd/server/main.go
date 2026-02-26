@@ -38,6 +38,8 @@ func main() {
 	if err := gormDB.AutoMigrate(&models.Item{}, &models.Client{}, &models.Token{}, &models.AuditLog{}); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
+	// One-time migration: hash existing plaintext client_ids (ignore error if column client_id does not exist).
+	_ = gormDB.Exec(`UPDATE tokens SET client_id_hash = client_id WHERE client_id_hash IS NULL OR client_id_hash = ''`).Error
 
 	cryptoService, err := services.NewCryptoService()
 	if err != nil {
@@ -61,12 +63,8 @@ func main() {
 	})
 
 	authService := services.NewAuthService(gormDB, cryptoService)
-	tokenService := &services.TokenService{
-		DB:          gormDB,
-		AuthService: authService,
-		Config:      cfg,
-		Blacklist:   blacklist,
-	}
+	tokenService := services.NewTokenService(gormDB, authService, cfg, blacklist)
+	itemsService := services.NewItemsService(gormDB)
 	auditLogger := middleware.NewAuditLogger(gormDB)
 	defer auditLogger.Shutdown()
 
@@ -86,29 +84,33 @@ func main() {
 		ReduceMemoryUsage:     cfg.Environment == "prod",
 		ReadTimeout:           5 * time.Second,
 		WriteTimeout:          10 * time.Second,
-		IdleTimeout:           120 * time.Second,
+		IdleTimeout:           30 * time.Second,
+		DisableKeepalive:      false,
 		ServerHeader:          "-",
 		BodyLimit:             cfg.BodyLimit,
 		Concurrency:           256 * 1024,
 		ErrorHandler:          middleware.ErrorHandler(logger),
 	})
 
-	// Middleware chain (order per plan: RequestID → SecurityHeaders → RateLimit → IPValidator → PayloadCrypto)
+	// Middleware chain (order per plan: RealIP → RequestID → SecurityHeaders → RateLimit → IPValidator → PayloadCrypto)
+	app.Use(middleware.RealIP(cfg))
 	app.Use(middleware.RequestID(cfg))
 	app.Use(middleware.RequestLogger(logger))
 	app.Use(middleware.SecurityHeaders())
 	app.Use(middleware.GlobalRateLimit(cfg))
 	app.Use(middleware.IPValidator(cfg))
-	app.Use(middleware.PayloadCrypto(cryptoService))
+	app.Use(middleware.PayloadCrypto(cryptoService, cfg.RequireEncryptedPayload))
 	app.Use(middleware.EncryptResponse(cryptoService))
 	app.Use(auditLogger.Middleware())
 
 	routes.Register(app, &routes.Dependencies{
-		DB:            gormDB,
-		Config:        cfg,
-		CryptoService: cryptoService,
-		AuthService:   authService,
-		TokenService:  tokenService,
+		DB:             gormDB,
+		Config:         cfg,
+		CryptoService:  cryptoService,
+		AuthService:    authService,
+		TokenService:   tokenService,
+		TokenValidator: tokenService,
+		ItemsService:   itemsService,
 	})
 
 	portStr := fmt.Sprintf(":%d", cfg.Port)

@@ -12,18 +12,18 @@
 package main
 
 import (
-	"bufio"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"gofiber_template/internal/envutil"
 	"gofiber_template/internal/services"
 )
 
 func main() {
-	loadEnv()
+	envutil.Load()
 	cryptoService, err := services.NewCryptoService()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -45,33 +45,4 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println(hex.EncodeToString(ct))
-}
-
-// loadEnv reads .env from cwd or parent and sets env vars (only if not already set).
-func loadEnv() {
-	for _, p := range []string{".env", "../.env"} {
-		f, err := os.Open(p)
-		if err != nil {
-			continue
-		}
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			idx := strings.Index(line, "=")
-			if idx == -1 {
-				continue
-			}
-			key := strings.TrimSpace(line[:idx])
-			val := strings.TrimSpace(line[idx+1:])
-			val = strings.Trim(val, "\"'")
-			if key != "" && os.Getenv(key) == "" {
-				os.Setenv(key, val)
-			}
-		}
-		f.Close()
-		return
-	}
 }

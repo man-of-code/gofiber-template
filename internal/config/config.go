@@ -26,14 +26,15 @@ type Config struct {
 
 	// IP validation
 	IPMode            string   // whitelist, blacklist, off
-	TrustedProxies    []string // CIDRs for trusted proxies
+	TrustedProxies    []string // CIDRs for trusted proxies; required to honor X-Forwarded-For
 	GlobalAllowedIPs  []string // CIDR whitelist when IPMode=whitelist
 	GlobalBlockedIPs  []string // CIDR blacklist when IPMode=blacklist
 	TrustedProxyDepth int      // how many X-Forwarded-For hops to trust
 
 	// Security
-	TokenBindingMode string // strict, subnet, off
-	BodyLimit        int    // bytes, default 1MB
+	TokenBindingMode        string // strict, subnet, off
+	RequireEncryptedPayload bool   // when true, reject unencrypted POST/PUT/PATCH/DELETE bodies
+	BodyLimit               int    // bytes, default 1MB
 }
 
 // Load reads config from environment and applies defaults.
@@ -109,6 +110,7 @@ func Load() *Config {
 		GlobalBlockedIPs:  parseCommaList(os.Getenv("GLOBAL_BLOCKED_IPS")),
 		TrustedProxyDepth: proxyDepth,
 		TokenBindingMode:  getEnv("TOKEN_BINDING_MODE", "strict"),
+		RequireEncryptedPayload: getEnv("REQUIRE_ENCRYPTED_PAYLOAD", "false") == "true",
 		BodyLimit:         bodyLimit,
 	}
 }

@@ -3,11 +3,11 @@ package middleware
 import (
 	"log/slog"
 	"net"
-	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
 	"gofiber_template/internal/config"
+	"gofiber_template/internal/netutil"
 )
 
 // IPValidator returns middleware that validates client IP against whitelist/blacklist.
@@ -16,12 +16,14 @@ func IPValidator(cfg *config.Config) fiber.Handler {
 	if cfg == nil || cfg.IPMode == "off" {
 		return func(c *fiber.Ctx) error { return c.Next() }
 	}
+	trustedProxies := netutil.ParseCIDRs(cfg.TrustedProxies)
 	cache := &ipValidatorCache{
-		allowed: parseCIDRs(cfg.GlobalAllowedIPs),
-		blocked: parseCIDRs(cfg.GlobalBlockedIPs),
+		allowed: netutil.ParseCIDRs(cfg.GlobalAllowedIPs),
+		blocked: netutil.ParseCIDRs(cfg.GlobalBlockedIPs),
 	}
 	return func(c *fiber.Ctx) error {
-		ip := getClientIP(c, cfg)
+		ip := netutil.GetClientIP(c.IP(), c.Get("X-Forwarded-For"), trustedProxies, cfg.TrustedProxyDepth)
+		c.Locals("real_ip", ip)
 		allowed := cache.isAllowed(ip)
 		blocked := cache.isBlocked(ip)
 		switch cfg.IPMode {
@@ -40,27 +42,6 @@ func IPValidator(cfg *config.Config) fiber.Handler {
 		}
 		return c.Next()
 	}
-}
-
-func getClientIP(c *fiber.Ctx, cfg *config.Config) string {
-	xff := c.Get("X-Forwarded-For")
-	if xff == "" {
-		return c.IP()
-	}
-	parts := strings.Split(strings.ReplaceAll(xff, " ", ""), ",")
-	depth := cfg.TrustedProxyDepth
-	if depth <= 0 || depth >= len(parts) {
-		depth = len(parts) - 1
-	}
-	idx := len(parts) - 1 - depth
-	if idx < 0 {
-		idx = 0
-	}
-	ip := strings.TrimSpace(parts[idx])
-	if ip != "" {
-		return ip
-	}
-	return c.IP()
 }
 
 type ipValidatorCache struct {
@@ -95,16 +76,4 @@ func (v *ipValidatorCache) isBlocked(ipStr string) bool {
 		}
 	}
 	return false
-}
-
-func parseCIDRs(cidrs []string) []*net.IPNet {
-	var out []*net.IPNet
-	for _, s := range cidrs {
-		_, n, err := net.ParseCIDR(strings.TrimSpace(s))
-		if err != nil {
-			continue
-		}
-		out = append(out, n)
-	}
-	return out
 }

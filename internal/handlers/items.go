@@ -4,13 +4,13 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 
-	"gofiber_template/internal/models"
+	"gofiber_template/internal/services"
 	"gofiber_template/internal/validator"
 )
 
 // ItemsHandler holds DB for item handlers.
 type ItemsHandler struct {
-	DB *gorm.DB
+	Service *services.ItemsService
 }
 
 const defaultPageSize = 20
@@ -22,23 +22,18 @@ func (h *ItemsHandler) List(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	offset := (page - 1) * limit
 
-	var items []models.Item
-	var total int64
-	if err := h.DB.Model(&models.Item{}).Count(&total).Error; err != nil {
-		return err
-	}
-	if err := h.DB.Offset(offset).Limit(limit).Find(&items).Error; err != nil {
+	result, err := h.Service.List(page, limit)
+	if err != nil {
 		return err
 	}
 	return c.JSON(fiber.Map{
-		"data": items,
+		"data": result.Items,
 		"meta": fiber.Map{
-			"page":       page,
-			"limit":      limit,
-			"total":      total,
-			"total_page": (total + int64(limit) - 1) / int64(limit),
+			"page":       result.Page,
+			"limit":      result.Limit,
+			"total":      result.Total,
+			"total_page": result.TotalPages,
 		},
 	})
 }
@@ -49,8 +44,8 @@ func (h *ItemsHandler) Get(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	var item models.Item
-	if err := h.DB.First(&item, id).Error; err != nil {
+	item, err := h.Service.Get(id)
+	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return fiber.NewError(fiber.StatusNotFound, "not found")
 		}
@@ -75,8 +70,8 @@ func (h *ItemsHandler) Create(c *fiber.Ctx) error {
 	if errs.HasAny() {
 		return errs
 	}
-	item := models.Item{Name: req.Name}
-	if err := h.DB.Create(&item).Error; err != nil {
+	item, err := h.Service.Create(req.Name)
+	if err != nil {
 		return err
 	}
 	return c.Status(fiber.StatusCreated).JSON(item)
@@ -102,15 +97,11 @@ func (h *ItemsHandler) Update(c *fiber.Ctx) error {
 	if errs.HasAny() {
 		return errs
 	}
-	var item models.Item
-	if err := h.DB.First(&item, id).Error; err != nil {
+	item, err := h.Service.Update(id, req.Name)
+	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return fiber.NewError(fiber.StatusNotFound, "not found")
 		}
-		return err
-	}
-	item.Name = req.Name
-	if err := h.DB.Save(&item).Error; err != nil {
 		return err
 	}
 	return c.JSON(item)
@@ -122,11 +113,10 @@ func (h *ItemsHandler) Delete(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	result := h.DB.Delete(&models.Item{}, id)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
+	if err := h.Service.Delete(id); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fiber.NewError(fiber.StatusNotFound, "not found")
+		}
 		return fiber.NewError(fiber.StatusNotFound, "not found")
 	}
 	return c.JSON(fiber.Map{"message": "deleted"})

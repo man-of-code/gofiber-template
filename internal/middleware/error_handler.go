@@ -38,7 +38,7 @@ func ErrorHandler(logger *slog.Logger) fiber.ErrorHandler {
 				"request_id", requestID,
 				"method", c.Method(),
 				"path", c.Path(),
-				"ip", c.IP(),
+				"ip", ClientIP(c),
 				"error", err.Error(),
 			)
 		}

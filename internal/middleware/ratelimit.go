@@ -47,7 +47,7 @@ func newRateLimiter(limit int, window time.Duration) *RateLimiter {
 	return rl
 }
 
-func (r *RateLimiter) allow(key string) (allowed bool, retryAfter int) {
+func (r *RateLimiter) allow(key string) (allowed bool, remaining int, retryAfter int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
@@ -60,7 +60,7 @@ func (r *RateLimiter) allow(key string) (allowed bool, retryAfter int) {
 
 	if until, ok := r.banned[key]; ok {
 		if now.Before(until) {
-			return false, int(until.Sub(now).Seconds())
+			return false, 0, int(until.Sub(now).Seconds())
 		}
 		delete(r.banned, key)
 	}
@@ -95,9 +95,13 @@ func (r *RateLimiter) allow(key string) (allowed bool, retryAfter int) {
 				retrySec = int(rem)
 			}
 		}
-		return false, retrySec
+		return false, 0, retrySec
 	}
-	return true, 0
+	remaining = r.limit - total
+	if remaining < 0 {
+		remaining = 0
+	}
+	return true, remaining, 0
 }
 
 func (r *RateLimiter) cleanup() {
@@ -134,15 +138,11 @@ func GlobalRateLimit(cfg *config.Config) fiber.Handler {
 		return func(c *fiber.Ctx) error { return c.Next() }
 	}
 	rl := newRateLimiter(cfg.GlobalRateLimit, time.Minute)
-	go func() {
-		t := time.NewTicker(time.Minute)
-		for range t.C {
-			rl.cleanup()
-		}
-	}()
 	return func(c *fiber.Ctx) error {
-		key := c.IP()
-		allowed, retryAfter := rl.allow(key)
+		key := ClientIP(c)
+		allowed, remaining, retryAfter := rl.allow(key)
+		c.Set("X-RateLimit-Limit", strconv.Itoa(rl.limit))
+		c.Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 		if !allowed {
 			c.Set("Retry-After", strconv.Itoa(retryAfter))
 			return fiber.NewError(fiber.StatusTooManyRequests, "rate limit exceeded")
@@ -158,8 +158,10 @@ func AuthRateLimit(cfg *config.Config) fiber.Handler {
 	}
 	rl := newRateLimiter(cfg.AuthRateLimit, time.Minute)
 	return func(c *fiber.Ctx) error {
-		key := "auth:" + c.IP()
-		allowed, retryAfter := rl.allow(key)
+		key := "auth:" + ClientIP(c)
+		allowed, remaining, retryAfter := rl.allow(key)
+		c.Set("X-RateLimit-Limit", strconv.Itoa(rl.limit))
+		c.Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 		if !allowed {
 			c.Set("Retry-After", strconv.Itoa(retryAfter))
 			return fiber.NewError(fiber.StatusTooManyRequests, "rate limit exceeded")
@@ -177,8 +179,10 @@ func APIRateLimit(cfg *config.Config) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		clientID := c.Locals("client_id")
 		if clientID == nil {
-			key := "anon:" + c.IP()
-			allowed, retryAfter := rl.allow(key)
+			key := "anon:" + ClientIP(c)
+			allowed, remaining, retryAfter := rl.allow(key)
+			c.Set("X-RateLimit-Limit", strconv.Itoa(rl.limit))
+			c.Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 			if !allowed {
 				c.Set("Retry-After", strconv.Itoa(retryAfter))
 				return fiber.NewError(fiber.StatusTooManyRequests, "rate limit exceeded")
@@ -186,7 +190,9 @@ func APIRateLimit(cfg *config.Config) fiber.Handler {
 			return c.Next()
 		}
 		key := "api:" + clientID.(string)
-		allowed, retryAfter := rl.allow(key)
+		allowed, remaining, retryAfter := rl.allow(key)
+		c.Set("X-RateLimit-Limit", strconv.Itoa(rl.limit))
+		c.Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 		if !allowed {
 			c.Set("Retry-After", strconv.Itoa(retryAfter))
 			return fiber.NewError(fiber.StatusTooManyRequests, "rate limit exceeded")

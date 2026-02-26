@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"net"
 	"time"
@@ -15,6 +14,7 @@ import (
 
 	"gofiber_template/internal/cache"
 	"gofiber_template/internal/config"
+	"gofiber_template/internal/netutil"
 	"gofiber_template/internal/models"
 )
 
@@ -36,6 +36,22 @@ type TokenService struct {
 	Blacklist   *cache.TokenBlacklist
 }
 
+func NewTokenService(db *gorm.DB, authService *AuthService, cfg *config.Config, blacklist *cache.TokenBlacklist) *TokenService {
+	return &TokenService{
+		DB:          db,
+		AuthService: authService,
+		Config:      cfg,
+		Blacklist:   blacklist,
+	}
+}
+
+type tokenGenInput struct {
+	clientID   string
+	clientDBID uint
+	ip         string
+	userAgent  string
+}
+
 // TokenPair holds access and refresh tokens.
 type TokenPair struct {
 	AccessToken  string `json:"access_token"`
@@ -52,54 +68,7 @@ type JWTClaims struct {
 	Fingerprint string `json:"fp,omitempty"` // SHA256(client_id|ip|user_agent)
 }
 
-// ParseAllowedIPs parses JSON array of CIDR strings.
-func ParseAllowedIPs(s string) []string {
-	if s == "" || s == "[]" {
-		return nil
-	}
-	var out []string
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil
-	}
-	return out
-}
-
-// IPInRanges checks if ip is in any of the CIDR ranges.
-func IPInRanges(ipStr string, ranges []string) bool {
-	if len(ranges) == 0 {
-		return true
-	}
-	ip := net.ParseIP(ipStr)
-	if ip == nil {
-		return false
-	}
-	for _, cidr := range ranges {
-		_, network, err := net.ParseCIDR(cidr)
-		if err != nil {
-			continue
-		}
-		if network.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-// IssueToken issues a new access + refresh token pair.
-func (s *TokenService) IssueToken(clientID string, clientSecret string, ip string, userAgent string) (*TokenPair, error) {
-	validatedID, err := s.AuthService.ValidateCredentials(clientID, clientSecret)
-	if err != nil {
-		return nil, err
-	}
-	client, err := s.AuthService.GetClientByPlainID(validatedID)
-	if err != nil {
-		return nil, err
-	}
-	ranges := ParseAllowedIPs(client.AllowedIPs)
-	if !IPInRanges(ip, ranges) {
-		return nil, ErrIPNotAllowed
-	}
-
+func (s *TokenService) generateTokenPair(tx *gorm.DB, input tokenGenInput) (*TokenPair, error) {
 	jti := uuid.New().String()
 	now := time.Now()
 	expiresAt := now.Add(s.Config.AccessTokenTTL)
@@ -115,14 +84,14 @@ func (s *TokenService) IssueToken(clientID string, clientSecret string, ip strin
 
 	claims := JWTClaims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   validatedID,
+			Subject:   input.clientID,
 			ID:        jti,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 		},
-		IP:          ip,
+		IP:          input.ip,
 		Scope:       "api",
-		Fingerprint: computeFingerprint(validatedID, ip, userAgent),
+		Fingerprint: computeFingerprint(input.clientID, input.ip, input.userAgent),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	accessToken, err := token.SignedString([]byte(s.Config.JWTSecret))
@@ -132,16 +101,20 @@ func (s *TokenService) IssueToken(clientID string, clientSecret string, ip strin
 
 	tok := models.Token{
 		JTI:              jti,
-		ClientID:         validatedID,
-		ClientDBID:       client.ID,
+		ClientIDHash:     clientIDHash(input.clientID),
+		ClientDBID:       input.clientDBID,
 		RefreshTokenHash: refreshHashHex,
-		IPAddress:        ip,
-		UserAgent:        userAgent,
+		IPAddress:        input.ip,
+		UserAgent:        input.userAgent,
 		IssuedAt:         now,
 		ExpiresAt:        expiresAt,
 		RefreshExpiresAt: refreshExpiresAt,
 	}
-	if err := s.DB.Create(&tok).Error; err != nil {
+	db := tx
+	if db == nil {
+		db = s.DB
+	}
+	if err := db.Create(&tok).Error; err != nil {
 		return nil, err
 	}
 
@@ -151,6 +124,28 @@ func (s *TokenService) IssueToken(clientID string, clientSecret string, ip strin
 		ExpiresIn:    int(s.Config.AccessTokenTTL.Seconds()),
 		TokenType:    "Bearer",
 	}, nil
+}
+
+// IssueToken issues a new access + refresh token pair.
+func (s *TokenService) IssueToken(clientID string, clientSecret string, ip string, userAgent string) (*TokenPair, error) {
+	validatedID, err := s.AuthService.ValidateCredentials(clientID, clientSecret)
+	if err != nil {
+		return nil, err
+	}
+	client, err := s.AuthService.GetClientByPlainID(validatedID)
+	if err != nil {
+		return nil, err
+	}
+	ranges := netutil.ParseAllowedIPs(client.AllowedIPs)
+	if !netutil.IPInRanges(ip, ranges) {
+		return nil, ErrIPNotAllowed
+	}
+	return s.generateTokenPair(nil, tokenGenInput{
+		clientID:   validatedID,
+		clientDBID: client.ID,
+		ip:         ip,
+		userAgent:  userAgent,
+	})
 }
 
 // RefreshToken rotates a refresh token into a new pair.
@@ -167,27 +162,27 @@ func (s *TokenService) RefreshToken(refreshToken string, ip string, userAgent st
 	}
 	if tok.Revoked {
 		now := time.Now()
-		s.DB.Model(&models.Token{}).Where("client_id = ?", tok.ClientID).Updates(map[string]interface{}{
+		s.DB.Model(&models.Token{}).Where("client_id_hash = ?", tok.ClientIDHash).Updates(map[string]interface{}{
 			"revoked": true, "revoked_at": now, "revoked_reason": "refresh_reuse",
 		})
-		s.loadRevokedJTIsForClient(tok.ClientID)
+		s.loadRevokedJTIsForClient(tok.ClientIDHash)
 		return nil, ErrRefreshReuse
 	}
 	if time.Now().After(tok.RefreshExpiresAt) {
 		return nil, ErrTokenExpired
 	}
-	client, err := s.AuthService.GetClientByPlainID(tok.ClientID)
+	clientView, err := s.AuthService.GetClient(tok.ClientDBID)
 	if err != nil {
 		return nil, err
 	}
-	ranges := ParseAllowedIPs(client.AllowedIPs)
-	if !IPInRanges(ip, ranges) && ip != tok.IPAddress {
+	ranges := clientView.AllowedIPs
+	if !netutil.IPInRanges(ip, ranges) && ip != tok.IPAddress {
 		return nil, ErrIPNotAllowed
 	}
-	return s.rotateToken(&tok, ip, userAgent)
+	return s.rotateToken(&tok, clientView.ClientID, ip, userAgent)
 }
 
-func (s *TokenService) rotateToken(old *models.Token, ip string, userAgent string) (*TokenPair, error) {
+func (s *TokenService) rotateToken(old *models.Token, clientID string, ip string, userAgent string) (*TokenPair, error) {
 	var result *TokenPair
 	err := s.DB.Transaction(func(tx *gorm.DB) error {
 		now := time.Now()
@@ -197,58 +192,14 @@ func (s *TokenService) rotateToken(old *models.Token, ip string, userAgent strin
 			return err
 		}
 		s.Blacklist.Add(old.JTI, old.ExpiresAt)
-
-		jti := uuid.New().String()
-		expiresAt := now.Add(s.Config.AccessTokenTTL)
-		refreshExpiresAt := now.Add(s.Config.RefreshTokenTTL)
-
-		refreshBytes := make([]byte, refreshTokenSize)
-		if _, err := rand.Read(refreshBytes); err != nil {
-			return err
-		}
-		refreshToken := hex.EncodeToString(refreshBytes)
-		refreshHash := sha256.Sum256([]byte(refreshToken))
-		refreshHashHex := hex.EncodeToString(refreshHash[:])
-
-		claims := JWTClaims{
-			RegisteredClaims: jwt.RegisteredClaims{
-				Subject:   old.ClientID,
-				ID:        jti,
-				IssuedAt:  jwt.NewNumericDate(now),
-				ExpiresAt: jwt.NewNumericDate(expiresAt),
-			},
-			IP:          ip,
-			Scope:       "api",
-			Fingerprint: computeFingerprint(old.ClientID, ip, userAgent),
-		}
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		accessToken, err := token.SignedString([]byte(s.Config.JWTSecret))
-		if err != nil {
-			return err
-		}
-
-		tok := models.Token{
-			JTI:              jti,
-			ClientID:         old.ClientID,
-			ClientDBID:       old.ClientDBID,
-			RefreshTokenHash: refreshHashHex,
-			IPAddress:        ip,
-			UserAgent:        userAgent,
-			IssuedAt:         now,
-			ExpiresAt:        expiresAt,
-			RefreshExpiresAt: refreshExpiresAt,
-		}
-		if err := tx.Create(&tok).Error; err != nil {
-			return err
-		}
-
-		result = &TokenPair{
-			AccessToken:  accessToken,
-			RefreshToken: refreshToken,
-			ExpiresIn:    int(s.Config.AccessTokenTTL.Seconds()),
-			TokenType:    "Bearer",
-		}
-		return nil
+		var err error
+		result, err = s.generateTokenPair(tx, tokenGenInput{
+			clientID:   clientID,
+			clientDBID: old.ClientDBID,
+			ip:         ip,
+			userAgent:  userAgent,
+		})
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -256,9 +207,9 @@ func (s *TokenService) rotateToken(old *models.Token, ip string, userAgent strin
 	return result, nil
 }
 
-func (s *TokenService) loadRevokedJTIsForClient(clientID string) {
+func (s *TokenService) loadRevokedJTIsForClient(clientIDHash string) {
 	var tokens []models.Token
-	s.DB.Where("client_id = ? AND revoked = ?", clientID, true).Find(&tokens)
+	s.DB.Where("client_id_hash = ? AND revoked = ?", clientIDHash, true).Find(&tokens)
 	for _, t := range tokens {
 		s.Blacklist.Add(t.JTI, t.ExpiresAt)
 	}

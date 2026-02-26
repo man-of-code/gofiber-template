@@ -1,40 +1,21 @@
 package handlers
 
 import (
-	"crypto/subtle"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 
 	"gofiber_template/internal/config"
 	"gofiber_template/internal/services"
+	"gofiber_template/internal/middleware"
 	"gofiber_template/internal/validator"
 )
 
 // AuthHandler handles auth and admin client endpoints.
 type AuthHandler struct {
-	AuthService  *services.AuthService
-	TokenService *services.TokenService
+	AuthService  services.ClientManager
+	TokenService services.TokenIssuer
 	Config       *config.Config
-}
-
-// requireAdmin validates the X-Admin-Key header when admin functionality is configured.
-func (h *AuthHandler) requireAdmin(c *fiber.Ctx) error {
-	if h.Config.AdminMasterKey == "" {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "admin not configured")
-	}
-	adminKey := c.Get("X-Admin-Key")
-	if !constantTimeEqual(adminKey, h.Config.AdminMasterKey) {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
-	}
-	return nil
-}
-
-func constantTimeEqual(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // RegisterClientRequest is the JSON body for client registration.
@@ -45,10 +26,6 @@ type RegisterClientRequest struct {
 
 // RegisterClient creates a new client (admin only).
 func (h *AuthHandler) RegisterClient(c *fiber.Ctx) error {
-	if err := h.requireAdmin(c); err != nil {
-		return err
-	}
-
 	var req RegisterClientRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
@@ -87,7 +64,7 @@ func (h *AuthHandler) IssueToken(c *fiber.Ctx) error {
 	if errs.HasAny() {
 		return errs
 	}
-	ip := c.IP()
+	ip := middleware.ClientIP(c)
 	userAgent := c.Get("User-Agent")
 	pair, err := h.TokenService.IssueToken(req.ClientID, req.ClientSecret, ip, userAgent)
 	if err != nil {
@@ -121,7 +98,7 @@ func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
 	if errs.HasAny() {
 		return errs
 	}
-	ip := c.IP()
+	ip := middleware.ClientIP(c)
 	userAgent := c.Get("User-Agent")
 	pair, err := h.TokenService.RefreshToken(req.RefreshToken, ip, userAgent)
 	if err != nil {
@@ -152,7 +129,7 @@ func (h *AuthHandler) RevokeToken(c *fiber.Ctx) error {
 	var req RevokeTokenRequest
 	_ = c.BodyParser(&req)
 	bodyToken := strings.TrimSpace(req.Token)
-	ip := c.IP()
+	ip := middleware.ClientIP(c)
 	if bodyToken == "" && accessToken == "" {
 		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
@@ -167,9 +144,6 @@ func (h *AuthHandler) RevokeToken(c *fiber.Ctx) error {
 
 // RevokeAllClientTokens revokes all tokens for a client (admin only).
 func (h *AuthHandler) RevokeAllClientTokens(c *fiber.Ctx) error {
-	if err := h.requireAdmin(c); err != nil {
-		return err
-	}
 	id, err := validator.ParsePositiveUint(c.Params("id"), "id")
 	if err != nil {
 		return err
@@ -208,9 +182,6 @@ func toClientResponse(view *services.ClientView) *ClientResponse {
 
 // ListClients returns all clients (admin only).
 func (h *AuthHandler) ListClients(c *fiber.Ctx) error {
-	if err := h.requireAdmin(c); err != nil {
-		return err
-	}
 	views, err := h.AuthService.ListClients()
 	if err != nil {
 		return err
@@ -224,9 +195,6 @@ func (h *AuthHandler) ListClients(c *fiber.Ctx) error {
 
 // GetClient returns a single client by database ID (admin only).
 func (h *AuthHandler) GetClient(c *fiber.Ctx) error {
-	if err := h.requireAdmin(c); err != nil {
-		return err
-	}
 	id, err := validator.ParsePositiveUint(c.Params("id"), "id")
 	if err != nil {
 		return err
@@ -250,9 +218,6 @@ type UpdateClientRequest struct {
 
 // UpdateClient updates client metadata (admin only).
 func (h *AuthHandler) UpdateClient(c *fiber.Ctx) error {
-	if err := h.requireAdmin(c); err != nil {
-		return err
-	}
 	id, err := validator.ParsePositiveUint(c.Params("id"), "id")
 	if err != nil {
 		return err
@@ -285,9 +250,6 @@ func (h *AuthHandler) UpdateClient(c *fiber.Ctx) error {
 
 // DeleteClient deletes a client and revokes its tokens (admin only).
 func (h *AuthHandler) DeleteClient(c *fiber.Ctx) error {
-	if err := h.requireAdmin(c); err != nil {
-		return err
-	}
 	id, err := validator.ParsePositiveUint(c.Params("id"), "id")
 	if err != nil {
 		return err

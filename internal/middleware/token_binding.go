@@ -8,7 +8,7 @@ import (
 
 // TokenBinding returns middleware that verifies IP and fingerprint match for authenticated requests.
 // Runs after JWT auth; expects claims in Locals. Skips if no claims (e.g. public route).
-func TokenBinding(tokenService *services.TokenService) fiber.Handler {
+func TokenBinding(tokenValidator services.TokenValidator) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		claims := c.Locals("claims")
 		if claims == nil {
@@ -18,9 +18,9 @@ func TokenBinding(tokenService *services.TokenService) fiber.Handler {
 		if !ok {
 			return c.Next()
 		}
-		ip := c.IP()
+		ip := ClientIP(c)
 		userAgent := c.Get("User-Agent")
-		if err := tokenService.ValidateBinding(jwtClaims, ip, userAgent); err != nil {
+		if err := tokenValidator.ValidateBinding(jwtClaims, ip, userAgent); err != nil {
 			return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 		}
 		return c.Next()

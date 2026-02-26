@@ -25,6 +25,8 @@ type rateEntry struct {
 	counts map[int64]int // unix second -> count
 }
 
+const maxRateLimiterEntries = 100000
+
 func newRateLimiter(limit int, window time.Duration) *RateLimiter {
 	banLimit := 5
 	if limit > 0 {
@@ -66,6 +68,10 @@ func (r *RateLimiter) allow(key string) (allowed bool, remaining int, retryAfter
 	}
 	e, ok := r.entries[key]
 	if !ok {
+		if len(r.entries) >= maxRateLimiterEntries {
+			// Under extreme load, reject new keys instead of unbounded growth.
+			return false, 0, int(windowSeconds)
+		}
 		e = &rateEntry{counts: make(map[int64]int)}
 		r.entries[key] = e
 	}

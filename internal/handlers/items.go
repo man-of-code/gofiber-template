@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"gorm.io/gorm"
 
 	"gofiber_template/internal/services"
 	"gofiber_template/internal/validator"
@@ -46,7 +45,7 @@ func (h *ItemsHandler) Get(c *fiber.Ctx) error {
 	}
 	item, err := h.Service.Get(id)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if err == services.ErrItemNotFound {
 			return fiber.NewError(fiber.StatusNotFound, "not found")
 		}
 		return err
@@ -99,7 +98,7 @@ func (h *ItemsHandler) Update(c *fiber.Ctx) error {
 	}
 	item, err := h.Service.Update(id, req.Name)
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if err == services.ErrItemNotFound {
 			return fiber.NewError(fiber.StatusNotFound, "not found")
 		}
 		return err
@@ -114,10 +113,10 @@ func (h *ItemsHandler) Delete(c *fiber.Ctx) error {
 		return err
 	}
 	if err := h.Service.Delete(id); err != nil {
-		if err == gorm.ErrRecordNotFound {
+		if err == services.ErrItemNotFound {
 			return fiber.NewError(fiber.StatusNotFound, "not found")
 		}
-		return fiber.NewError(fiber.StatusNotFound, "not found")
+		return err
 	}
 	return c.JSON(fiber.Map{"message": "deleted"})
 }

@@ -16,7 +16,6 @@ func Load(paths ...string) {
 		if err != nil {
 			continue
 		}
-		defer f.Close()
 		sc := bufio.NewScanner(f)
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
@@ -34,6 +33,7 @@ func Load(paths ...string) {
 				os.Setenv(key, val)
 			}
 		}
+		f.Close()
 		return
 	}
 }

@@ -1,9 +1,13 @@
 package services
 
 import (
+	"errors"
+
 	"gofiber_template/internal/models"
 	"gorm.io/gorm"
 )
+
+var ErrItemNotFound = errors.New("item not found")
 
 type ItemsService struct {
 	DB *gorm.DB
@@ -43,6 +47,9 @@ func (s *ItemsService) List(page, limit int) (*PaginatedItems, error) {
 func (s *ItemsService) Get(id uint) (*models.Item, error) {
 	var item models.Item
 	if err := s.DB.First(&item, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrItemNotFound
+		}
 		return nil, err
 	}
 	return &item, nil
@@ -59,6 +66,9 @@ func (s *ItemsService) Create(name string) (*models.Item, error) {
 func (s *ItemsService) Update(id uint, name string) (*models.Item, error) {
 	var item models.Item
 	if err := s.DB.First(&item, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrItemNotFound
+		}
 		return nil, err
 	}
 	item.Name = name
@@ -74,7 +84,7 @@ func (s *ItemsService) Delete(id uint) error {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+		return ErrItemNotFound
 	}
 	return nil
 }

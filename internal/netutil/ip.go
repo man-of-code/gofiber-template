@@ -8,20 +8,20 @@ import (
 
 // GetClientIP extracts the real client IP, respecting trusted proxy depth.
 // If trustedProxies is empty or XFF is absent, falls back to directIP.
+// Only honors X-Forwarded-For when the direct connection IP is within a trusted proxy range.
 func GetClientIP(directIP, xff string, trustedProxies []*net.IPNet, trustedProxyDepth int) string {
 	if xff == "" || len(trustedProxies) == 0 {
 		return directIP
 	}
-	parts := strings.Split(strings.ReplaceAll(xff, " ", ""), ",")
-	// Validate last hop is a trusted proxy
-	lastHop := strings.TrimSpace(parts[len(parts)-1])
-	lastHopIP := net.ParseIP(lastHop)
-	if lastHopIP == nil {
+
+	// Only honor XFF when the direct connection comes from a trusted proxy.
+	direct := net.ParseIP(directIP)
+	if direct == nil {
 		return directIP
 	}
 	trusted := false
 	for _, n := range trustedProxies {
-		if n.Contains(lastHopIP) {
+		if n.Contains(direct) {
 			trusted = true
 			break
 		}
@@ -29,6 +29,8 @@ func GetClientIP(directIP, xff string, trustedProxies []*net.IPNet, trustedProxy
 	if !trusted {
 		return directIP
 	}
+
+	parts := strings.Split(strings.ReplaceAll(xff, " ", ""), ",")
 
 	depth := trustedProxyDepth
 	if depth <= 0 || depth >= len(parts) {

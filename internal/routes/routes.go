@@ -40,8 +40,10 @@ func Register(app *fiber.App, deps *Dependencies) {
 		middleware.TokenBinding(deps.TokenValidator),
 		authHandler.RevokeToken)
 
-	// Admin (X-Admin-Key required)
-	admin := app.Group("/admin", middleware.AdminAuth(deps.Config))
+	// Admin (X-Admin-Key required, rate-limited per IP using auth limiter)
+	admin := app.Group("/admin",
+		middleware.AuthRateLimit(deps.Config),
+		middleware.AdminAuth(deps.Config))
 	admin.Post("/clients", authHandler.RegisterClient)
 	admin.Post("/clients/:id/revoke-all", authHandler.RevokeAllClientTokens)
 	admin.Get("/clients", authHandler.ListClients)

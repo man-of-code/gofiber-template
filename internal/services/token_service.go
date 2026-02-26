@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"net"
 	"time"
 
@@ -19,6 +20,11 @@ import (
 )
 
 const refreshTokenSize = 64
+
+const (
+	jwtIssuer   = "gofiber-template"
+	jwtAudience = "gofiber-template-api"
+)
 
 var (
 	ErrTokenNotFound = errors.New("token not found")
@@ -88,6 +94,8 @@ func (s *TokenService) generateTokenPair(tx *gorm.DB, input tokenGenInput) (*Tok
 			ID:        jti,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			Issuer:    jwtIssuer,
+			Audience:  []string{jwtAudience},
 		},
 		IP:          input.ip,
 		Scope:       "api",
@@ -162,9 +170,14 @@ func (s *TokenService) RefreshToken(refreshToken string, ip string, userAgent st
 	}
 	if tok.Revoked {
 		now := time.Now()
-		s.DB.Model(&models.Token{}).Where("client_id_hash = ?", tok.ClientIDHash).Updates(map[string]interface{}{
+		if err := s.DB.Model(&models.Token{}).Where("client_id_hash = ?", tok.ClientIDHash).Updates(map[string]interface{}{
 			"revoked": true, "revoked_at": now, "revoked_reason": "refresh_reuse",
-		})
+		}).Error; err != nil {
+			slog.Error("token_refresh_reuse_bulk_revoke_failed",
+				"client_id_hash", tok.ClientIDHash,
+				"error", err.Error(),
+			)
+		}
 		s.loadRevokedJTIsForClient(tok.ClientIDHash)
 		return nil, ErrRefreshReuse
 	}
@@ -218,8 +231,18 @@ func (s *TokenService) loadRevokedJTIsForClient(clientIDHash string) {
 // CleanupExpired removes old, already-revoked tokens to keep the table small.
 func (s *TokenService) CleanupExpired() {
 	cutoff := time.Now().Add(-7 * 24 * time.Hour)
-	s.DB.Where("expires_at < ? AND revoked = ?", cutoff, true).
-		Delete(&models.Token{})
+	for {
+		result := s.DB.Where("expires_at < ? AND revoked = ?", cutoff, true).
+			Limit(500).
+			Delete(&models.Token{})
+		if result.Error != nil {
+			slog.Error("token_cleanup_failed", "error", result.Error.Error())
+			return
+		}
+		if result.RowsAffected == 0 {
+			return
+		}
+	}
 }
 
 // RevokeToken revokes a token by JTI or refresh token.
@@ -260,11 +283,13 @@ func (s *TokenService) RevokeAllForClient(clientDBID uint) error {
 	if len(tokens) == 0 {
 		return nil
 	}
-	s.DB.Model(&models.Token{}).
+	if err := s.DB.Model(&models.Token{}).
 		Where("client_db_id = ? AND revoked = ?", clientDBID, false).
 		Updates(map[string]interface{}{
 			"revoked": true, "revoked_at": now, "revoked_reason": "admin_revoke_all",
-		})
+		}).Error; err != nil {
+		return err
+	}
 	for _, t := range tokens {
 		s.Blacklist.Add(t.JTI, t.ExpiresAt)
 	}
@@ -281,9 +306,15 @@ func (s *TokenService) parseAndValidateJWT(accessToken string, ip string, valida
 	if s.Config.JWTSecret == "" || len(s.Config.JWTSecret) < 64 {
 		return nil, errors.New("jwt not configured")
 	}
-	token, err := jwt.ParseWithClaims(accessToken, &JWTClaims{}, func(t *jwt.Token) (interface{}, error) {
-		return []byte(s.Config.JWTSecret), nil
-	})
+	token, err := jwt.ParseWithClaims(
+		accessToken,
+		&JWTClaims{},
+		func(t *jwt.Token) (interface{}, error) {
+			return []byte(s.Config.JWTSecret), nil
+		},
+		jwt.WithIssuer(jwtIssuer),
+		jwt.WithAudience(jwtAudience),
+	)
 	if err != nil {
 		return nil, err
 	}

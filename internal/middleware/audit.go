@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -96,6 +98,11 @@ func (a *AuditLogger) Middleware() fiber.Handler {
 
 		requestID, _ := c.Locals("request_id").(string)
 		clientID, _ := c.Locals("client_id").(string)
+		clientIDHash := ""
+		if clientID != "" {
+			h := sha256.Sum256([]byte(clientID))
+			clientIDHash = hex.EncodeToString(h[:])
+		}
 		severity := "info"
 		switch {
 		case status >= fiber.StatusInternalServerError:
@@ -113,7 +120,7 @@ func (a *AuditLogger) Middleware() fiber.Handler {
 		entry := models.AuditLog{
 			RequestID: requestID,
 			Action:    action,
-			ClientID:  clientID,
+			ClientID:  clientIDHash,
 			IPAddress: ClientIP(c),
 			UserAgent: c.Get("User-Agent"),
 			Detail:    string(detailJSON),

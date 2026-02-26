@@ -61,9 +61,10 @@ func TestRealIP_XFFWithoutTrustedProxy_Ignored(t *testing.T) {
 }
 
 func TestRealIP_XFFWithTrustedProxy_ExtractsClient(t *testing.T) {
-	// Trust 10.0.0.0/8; direct connection from 10.0.0.1 (proxy), X-Forwarded-For: client, 10.0.0.1
+	// In tests, Fiber may report the direct IP as 0.0.0.0. Configure TrustedProxies
+	// to trust that address so that XFF is honored when present.
 	cfg := &config.Config{
-		TrustedProxies:    []string{"10.0.0.0/8"},
+		TrustedProxies:    []string{"0.0.0.0/0"},
 		TrustedProxyDepth: 1,
 	}
 	app := fiber.New()

@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"net"
 	"strings"
-	"sync"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -29,11 +28,13 @@ func IPValidator(cfg *config.Config) fiber.Handler {
 		case "whitelist":
 			if !allowed {
 				slog.Warn("ip blocked by whitelist", "ip", ip, "path", c.Path())
+				c.Locals("ip_blocked", true)
 				return fiber.NewError(fiber.StatusForbidden, "forbidden")
 			}
 		case "blacklist":
 			if blocked {
 				slog.Warn("ip blocked by blacklist", "ip", ip, "path", c.Path())
+				c.Locals("ip_blocked", true)
 				return fiber.NewError(fiber.StatusForbidden, "forbidden")
 			}
 		}
@@ -63,7 +64,6 @@ func getClientIP(c *fiber.Ctx, cfg *config.Config) string {
 }
 
 type ipValidatorCache struct {
-	mu      sync.RWMutex
 	allowed []*net.IPNet
 	blocked []*net.IPNet
 }
@@ -73,8 +73,6 @@ func (v *ipValidatorCache) isAllowed(ipStr string) bool {
 	if ip == nil {
 		return false
 	}
-	v.mu.RLock()
-	defer v.mu.RUnlock()
 	if len(v.allowed) == 0 {
 		return false
 	}
@@ -91,8 +89,6 @@ func (v *ipValidatorCache) isBlocked(ipStr string) bool {
 	if ip == nil {
 		return false
 	}
-	v.mu.RLock()
-	defer v.mu.RUnlock()
 	for _, n := range v.blocked {
 		if n.Contains(ip) {
 			return true

@@ -41,7 +41,7 @@ func printGeneratedSecrets(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	jwtSecret, err := randomHex(32)
+	jwtSecret, err := randomHex(64)
 	if err != nil {
 		return err
 	}
@@ -83,8 +83,8 @@ func validateEnv(w io.Writer, path string) error {
 	}
 
 	jwt := values["JWT_SECRET"]
-	if len(jwt) < 64 {
-		issues = append(issues, "JWT_SECRET should have at least 64 characters of entropy")
+	if len(jwt) < 128 {
+		issues = append(issues, "JWT_SECRET should have at least 128 hex characters (64 bytes) of entropy")
 	}
 
 	admin := values["ADMIN_MASTER_KEY"]
@@ -122,4 +122,3 @@ func parseEnv(content string) map[string]string {
 	}
 	return values
 }
-

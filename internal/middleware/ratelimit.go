@@ -22,8 +22,7 @@ type RateLimiter struct {
 }
 
 type rateEntry struct {
-	count    int
-	windowAt time.Time
+	counts map[int64]int // unix second -> count
 }
 
 func newRateLimiter(limit int, window time.Duration) *RateLimiter {
@@ -31,7 +30,7 @@ func newRateLimiter(limit int, window time.Duration) *RateLimiter {
 	if limit > 0 {
 		banLimit = limit * 5
 	}
-	return &RateLimiter{
+	rl := &RateLimiter{
 		entries:  make(map[string]*rateEntry),
 		limit:    limit,
 		window:   window,
@@ -39,12 +38,26 @@ func newRateLimiter(limit int, window time.Duration) *RateLimiter {
 		banDur:   10 * time.Minute,
 		banned:   make(map[string]time.Time),
 	}
+	go func() {
+		t := time.NewTicker(window)
+		for range t.C {
+			rl.cleanup()
+		}
+	}()
+	return rl
 }
 
 func (r *RateLimiter) allow(key string) (allowed bool, retryAfter int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
+	sec := now.Unix()
+	windowSeconds := int64(r.window.Seconds())
+	if windowSeconds <= 0 {
+		windowSeconds = 60
+	}
+	windowStart := sec - windowSeconds + 1
+
 	if until, ok := r.banned[key]; ok {
 		if now.Before(until) {
 			return false, int(until.Sub(now).Seconds())
@@ -53,22 +66,34 @@ func (r *RateLimiter) allow(key string) (allowed bool, retryAfter int) {
 	}
 	e, ok := r.entries[key]
 	if !ok {
-		r.entries[key] = &rateEntry{count: 1, windowAt: now}
-		return true, 0
+		e = &rateEntry{counts: make(map[int64]int)}
+		r.entries[key] = e
 	}
-	if now.Sub(e.windowAt) >= r.window {
-		e.count = 1
-		e.windowAt = now
-		return true, 0
+	e.counts[sec]++
+
+	total := 0
+	var earliest int64 = 0
+	for ts, cnt := range e.counts {
+		if ts < windowStart {
+			delete(e.counts, ts)
+			continue
+		}
+		total += cnt
+		if earliest == 0 || ts < earliest {
+			earliest = ts
+		}
 	}
-	e.count++
-	if e.count > r.limit {
-		if e.count >= r.banLimit {
+
+	if total > r.limit {
+		if total >= r.banLimit {
 			r.banned[key] = now.Add(r.banDur)
 		}
-		retrySec := int(r.window.Seconds())
-		if rem := r.window - now.Sub(e.windowAt); rem > 0 {
-			retrySec = int(rem.Seconds())
+		retrySec := int(windowSeconds)
+		if earliest != 0 {
+			rem := (earliest + windowSeconds) - sec
+			if rem > 0 {
+				retrySec = int(rem)
+			}
 		}
 		return false, retrySec
 	}
@@ -80,7 +105,19 @@ func (r *RateLimiter) cleanup() {
 	defer r.mu.Unlock()
 	now := time.Now()
 	for k, e := range r.entries {
-		if now.Sub(e.windowAt) > r.window*2 {
+		// Drop entries with only old buckets.
+		sec := now.Unix()
+		windowSeconds := int64(r.window.Seconds())
+		if windowSeconds <= 0 {
+			windowSeconds = 60
+		}
+		windowStart := sec - windowSeconds*2
+		for ts := range e.counts {
+			if ts < windowStart {
+				delete(e.counts, ts)
+			}
+		}
+		if len(e.counts) == 0 {
 			delete(r.entries, k)
 		}
 	}

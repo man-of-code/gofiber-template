@@ -43,6 +43,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("crypto: %v", err)
 	}
+	// Keys have been loaded into process memory; clear from environment.
+	os.Unsetenv("ENCRYPTION_KEY")
+	os.Unsetenv("JWT_SECRET")
+	os.Unsetenv("ADMIN_MASTER_KEY")
 	blacklist := cache.NewTokenBlacklist()
 	// Load revoked JTIs on startup
 	var revoked []struct {
@@ -56,7 +60,7 @@ func main() {
 		}
 	})
 
-	authService := &services.AuthService{DB: gormDB, CryptoService: cryptoService}
+	authService := services.NewAuthService(gormDB, cryptoService)
 	tokenService := &services.TokenService{
 		DB:          gormDB,
 		AuthService: authService,
@@ -66,17 +70,26 @@ func main() {
 	auditLogger := middleware.NewAuditLogger(gormDB)
 	defer auditLogger.Shutdown()
 
+	// Background cleanup of expired, already-revoked tokens.
+	go func() {
+		t := time.NewTicker(1 * time.Hour)
+		for range t.C {
+			tokenService.CleanupExpired()
+		}
+	}()
+
 	app := fiber.New(fiber.Config{
 		Prefork:               false, // single process for SQLite
-		DisableStartupMessage: os.Getenv("ENV") == "prod",
+		DisableStartupMessage: cfg.Environment == "prod",
 		ReadBufferSize:        8192, // 8KB
 		WriteBufferSize:       8192, // 8KB
-		ReduceMemoryUsage:     os.Getenv("ENV") == "prod",
+		ReduceMemoryUsage:     cfg.Environment == "prod",
 		ReadTimeout:           5 * time.Second,
 		WriteTimeout:          10 * time.Second,
 		IdleTimeout:           120 * time.Second,
 		ServerHeader:          "-",
 		BodyLimit:             cfg.BodyLimit,
+		Concurrency:           256 * 1024,
 		ErrorHandler:          middleware.ErrorHandler(logger),
 	})
 

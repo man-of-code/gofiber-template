@@ -13,14 +13,16 @@ const keySize = 32
 
 // Key contexts for HKDF derivation.
 const (
-	ContextClientAtRest  = "client-at-rest"
-	ContextTokenAtRest   = "token-at-rest"
+	ContextClientAtRest     = "client-at-rest"
+	ContextTokenAtRest      = "token-at-rest"
 	ContextPayloadTransport = "payload-transport"
 )
 
+var appSalt = []byte("hanushield-v1")
+
 // deriveKey derives a 32-byte key from master using HKDF-SHA256.
 func deriveKey(master []byte, context string) ([]byte, error) {
-	hkdf := hkdf.New(sha256.New, master, nil, []byte(context))
+	hkdf := hkdf.New(sha256.New, master, appSalt, []byte(context))
 	key := make([]byte, keySize)
 	if _, err := hkdf.Read(key); err != nil {
 		return nil, err

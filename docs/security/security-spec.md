@@ -1,6 +1,6 @@
-# HanuShield Security Specification
+# Security Specification
 
-**Date:** 2025-02-26
+**Date:** 2026-02-26
 **Version:** 1.0
 **Classification:** Internal — Engineering
 
@@ -30,25 +30,25 @@
 
 ### 1.1 Assets
 
-| Asset | Sensitivity | Location |
-|-------|------------|----------|
-| Client credentials (client_id, client_secret) | Critical | DB (encrypted at rest), transit (encrypted) |
-| JWT access tokens | High | Client memory, HTTP headers |
-| Refresh tokens | Critical | Client memory, DB (hashed) |
-| Encryption master key | Critical | Environment variable (never in code/DB) |
-| JWT signing secret | Critical | Environment variable |
-| Item data | Medium | DB |
-| Audit logs | Medium | DB |
+| Asset                                         | Sensitivity | Location                                    |
+| --------------------------------------------- | ----------- | ------------------------------------------- |
+| Client credentials (client_id, client_secret) | Critical    | DB (encrypted at rest), transit (encrypted) |
+| JWT access tokens                             | High        | Client memory, HTTP headers                 |
+| Refresh tokens                                | Critical    | Client memory, DB (hashed)                  |
+| Encryption master key                         | Critical    | Environment variable (never in code/DB)     |
+| JWT signing secret                            | Critical    | Environment variable                        |
+| Item data                                     | Medium      | DB                                          |
+| Audit logs                                    | Medium      | DB                                          |
 
 ### 1.2 Threat Actors
 
-| Actor | Capability | Motivation |
-|-------|-----------|------------|
+| Actor             | Capability                      | Motivation                     |
+| ----------------- | ------------------------------- | ------------------------------ |
 | External attacker | Network access, automated tools | Data theft, service disruption |
-| Credential thief | Stolen client_id/secret | Unauthorized API access |
-| Token thief | Intercepted JWT | Impersonation, data access |
-| Insider threat | Partial system access | Data exfiltration |
-| DDoS operator | Botnet, amplification | Service denial |
+| Credential thief  | Stolen client_id/secret         | Unauthorized API access        |
+| Token thief       | Intercepted JWT                 | Impersonation, data access     |
+| Insider threat    | Partial system access           | Data exfiltration              |
+| DDoS operator     | Botnet, amplification           | Service denial                 |
 
 ### 1.3 Attack Surfaces
 
@@ -69,6 +69,7 @@ Internet → [Rate Limiter] → [IP Validator] → [TLS termination*]
 **Vulnerability addressed:** Weak Authentication Mechanisms (OWASP A07), Default Passwords (#28), Credential Stuffing (#22)
 
 **Implementation:**
+
 - Client credentials are issued by an admin endpoint protected by a master key
 - `client_id`: UUID v4 (128-bit entropy, cryptographically random via `crypto/rand`)
 - `client_secret`: 64 bytes from `crypto/rand` (512-bit entropy), hex-encoded for transport
@@ -79,6 +80,7 @@ Internet → [Rate Limiter] → [IP Validator] → [TLS termination*]
 **Why bcrypt:** Resistant to GPU/ASIC acceleration, adaptive cost factor, built-in salt. At cost 12, brute-forcing a 64-byte secret is computationally infeasible.
 
 **Controls:**
+
 - No default credentials ever exist in the system
 - Credential generation uses only `crypto/rand` (CSPRNG), never `math/rand`
 - Client secrets cannot be retrieved after registration — only re-issued
@@ -109,6 +111,7 @@ Client                          Server
 ```
 
 **Brute-force mitigations:**
+
 - Auth endpoints rate-limited to 10 requests/minute per IP
 - After 5 consecutive failed attempts from an IP: temporary 10-minute IP ban
 - After 10 consecutive failed attempts for a client_id: client auto-suspended, admin alert
@@ -124,6 +127,7 @@ Client                          Server
 **Vulnerability addressed:** Session Hijacking (#16), Insufficient Session Management (#72), Insecure Token Storage
 
 **Structure:**
+
 ```json
 {
   "header": {
@@ -143,6 +147,7 @@ Client                          Server
 ```
 
 **Security properties:**
+
 - Short TTL: 15 minutes (limits window of compromise)
 - Signed with HMAC-SHA256 using 64-byte secret (prevents tampering)
 - Contains bound IP address (prevents token theft from different network)
@@ -187,6 +192,7 @@ Client                          Server
 
 **Refresh token reuse detection (critical):**
 If a refresh token that was already consumed is presented again, it indicates token theft. The server immediately:
+
 1. Revokes ALL active tokens for that client
 2. Logs a security alert with full context (IP, user-agent, timestamp)
 3. Returns 401 (does not reveal the reason to the attacker)
@@ -198,6 +204,7 @@ This is based on the principle that in normal operation, a refresh token is used
 **Vulnerability addressed:** Insufficient Session Termination, Token Persistence After Logout
 
 **Mechanisms:**
+
 1. **Explicit revocation:** `POST /auth/token/revoke` marks token as revoked in DB
 2. **Rotation revocation:** Old tokens revoked during refresh
 3. **Client revocation:** Admin can revoke all tokens for a client
@@ -217,18 +224,19 @@ On server restart, non-expired revoked JTIs are loaded from DB into memory.
 
 **Vulnerability addressed:** Unencrypted Data Storage (#25), Data Leakage (#24)
 
-| Data | Algorithm | Key |
-|------|-----------|-----|
-| Client ID (DB column) | AES-256-GCM | Derived: `HKDF(master, "client-at-rest")` |
-| Token metadata | AES-256-GCM | Derived: `HKDF(master, "token-at-rest")` |
-| Client secret | bcrypt (hash, not encryption) | N/A — one-way |
-| Refresh token (DB) | SHA-256 (hash) | N/A — one-way |
+| Data                  | Algorithm                     | Key                                       |
+| --------------------- | ----------------------------- | ----------------------------------------- |
+| Client ID (DB column) | AES-256-GCM                   | Derived: `HKDF(master, "client-at-rest")` |
+| Token metadata        | AES-256-GCM                   | Derived: `HKDF(master, "token-at-rest")`  |
+| Client secret         | bcrypt (hash, not encryption) | N/A — one-way                             |
+| Refresh token (DB)    | SHA-256 (hash)                | N/A — one-way                             |
 
 ### 4.2 Encryption In Transit
 
 **Vulnerability addressed:** Man-in-the-Middle (#52), Insufficient Transport Layer Security (#53)
 
 **Payload encryption layer (application-level):**
+
 - Clients may encrypt request bodies with AES-256-GCM using a shared transport key
 - Header `X-Encrypted-Payload: true` signals encrypted body
 - Server middleware decrypts before handler processing
@@ -236,6 +244,7 @@ On server restart, non-expired revoked JTIs are loaded from DB into memory.
 - Transport key derived from master: `HKDF(master, "payload-transport")`
 
 **Network-level (production):**
+
 - TLS 1.2+ required (terminated at reverse proxy)
 - HSTS header with `max-age=31536000; includeSubDomains`
 - Forward secrecy via ECDHE cipher suites
@@ -245,6 +254,7 @@ On server restart, non-expired revoked JTIs are loaded from DB into memory.
 **Vulnerability addressed:** Insecure Key Storage, Key Compromise
 
 **Key hierarchy:**
+
 ```
 ENCRYPTION_KEY (master, 32 bytes, hex in env var)
   │
@@ -256,12 +266,14 @@ JWT_SECRET (separate, 64 bytes, hex in env var)
 ```
 
 **Key rotation protocol:**
+
 1. Generate new master key, set as `ENCRYPTION_KEY_NEW` in env
 2. Application enters dual-key mode: decrypt with old or new, encrypt with new
 3. Background job re-encrypts all at-rest data with new key
 4. Remove old key, rename new to `ENCRYPTION_KEY`
 
 **Controls:**
+
 - Master key never stored in code, config files, or database
 - Master key loaded from environment variable at startup, zeroed from env after read
 - Derived keys held in memory only, never serialized
@@ -269,14 +281,14 @@ JWT_SECRET (separate, 64 bytes, hex in env var)
 
 ### 4.4 Cryptographic Specifications
 
-| Purpose | Algorithm | Key Size | Nonce | Tag |
-|---------|-----------|----------|-------|-----|
-| Symmetric encryption | AES-256-GCM | 256-bit | 96-bit random | 128-bit |
-| Password hashing | bcrypt | N/A | Built-in salt | N/A |
-| Token hashing | SHA-256 | N/A | N/A | N/A |
-| JWT signing | HMAC-SHA256 | 512-bit | N/A | N/A |
-| Key derivation | HKDF-SHA256 | 256-bit output | App-specific salt | N/A |
-| Random generation | crypto/rand | N/A | N/A | N/A |
+| Purpose              | Algorithm   | Key Size       | Nonce             | Tag     |
+| -------------------- | ----------- | -------------- | ----------------- | ------- |
+| Symmetric encryption | AES-256-GCM | 256-bit        | 96-bit random     | 128-bit |
+| Password hashing     | bcrypt      | N/A            | Built-in salt     | N/A     |
+| Token hashing        | SHA-256     | N/A            | N/A               | N/A     |
+| JWT signing          | HMAC-SHA256 | 512-bit        | N/A               | N/A     |
+| Key derivation       | HKDF-SHA256 | 256-bit output | App-specific salt | N/A     |
+| Random generation    | crypto/rand | N/A            | N/A               | N/A     |
 
 ---
 
@@ -288,13 +300,14 @@ JWT_SECRET (separate, 64 bytes, hex in env var)
 
 **Layers of IP validation:**
 
-| Layer | Check | Fail Action |
-|-------|-------|-------------|
-| Global middleware | IP against global allow/block lists | 403 Forbidden |
-| Auth endpoint | Request IP against client's `AllowedIPs` CIDRs | 403 Forbidden |
-| JWT middleware | Request IP against token's `ip` claim | 401 Unauthorized |
+| Layer             | Check                                          | Fail Action      |
+| ----------------- | ---------------------------------------------- | ---------------- |
+| Global middleware | IP against global allow/block lists            | 403 Forbidden    |
+| Auth endpoint     | Request IP against client's `AllowedIPs` CIDRs | 403 Forbidden    |
+| JWT middleware    | Request IP against token's `ip` claim          | 401 Unauthorized |
 
 **Implementation details:**
+
 - CIDR parsing at startup into `net.IPNet` objects (no per-request parsing overhead)
 - Support IPv4 and IPv6
 - `X-Forwarded-For` / `X-Real-IP` parsing with configurable trusted proxy depth
@@ -314,6 +327,7 @@ Extracted client IP: client_ip (skip 1 trusted proxy from right)
 ```
 
 **Controls:**
+
 - `TrustedProxies` is an explicit allowlist (no wildcard)
 - If no trusted proxies configured, `c.IP()` returns direct connection IP
 - `X-Forwarded-For` header only parsed if request comes from a trusted proxy IP
@@ -337,6 +351,7 @@ if token.ip != request.ip AND request.ip NOT IN client.AllowedIPs:
 ```
 
 **Strictness modes:**
+
 - `strict`: Exact IP match required
 - `subnet`: Same /24 (IPv4) or /48 (IPv6) allowed (for mobile/NAT)
 - `off`: No IP binding (not recommended)
@@ -360,6 +375,7 @@ As described in Section 3.3: reuse of a consumed refresh token triggers immediat
 **Vulnerability addressed:** Timing Attacks (#93)
 
 All secret comparisons use constant-time functions:
+
 - `crypto/subtle.ConstantTimeCompare` for token/hash comparisons
 - `bcrypt.CompareHashAndPassword` (inherently constant-time)
 - Identical error responses for "not found" vs "wrong credentials" (no enumeration)
@@ -374,12 +390,12 @@ All secret comparisons use constant-time functions:
 
 **Rate limit tiers:**
 
-| Scope | Limit | Key | Penalty |
-|-------|-------|-----|---------|
-| Global per-IP | 1000 req/min | IP address | 429 + Retry-After |
-| Auth per-IP | 10 req/min | IP address | 429 + Retry-After |
-| API per-client | 200 req/min | client_id | 429 + Retry-After |
-| Burst tolerance | 5x sustained | IP address | 10-min auto-ban |
+| Scope           | Limit        | Key        | Penalty           |
+| --------------- | ------------ | ---------- | ----------------- |
+| Global per-IP   | 1000 req/min | IP address | 429 + Retry-After |
+| Auth per-IP     | 10 req/min   | IP address | 429 + Retry-After |
+| API per-client  | 200 req/min  | client_id  | 429 + Retry-After |
+| Burst tolerance | 5x sustained | IP address | 10-min auto-ban   |
 
 **Implementation:** Sliding window counter in memory (`sync.Map` with atomic counters, per-second granularity, 60-second window).
 
@@ -389,22 +405,22 @@ All secret comparisons use constant-time functions:
 
 **Vulnerability addressed:** Slowloris Attack (#64)
 
-| Parameter | Value | Purpose |
-|-----------|-------|---------|
-| ReadTimeout | 5s | Kill slow request reads |
-| WriteTimeout | 10s | Kill slow response writes |
-| IdleTimeout | 120s | Reclaim idle connections |
-| ReadBufferSize | 8KB | Limit per-connection memory |
+| Parameter      | Value | Purpose                     |
+| -------------- | ----- | --------------------------- |
+| ReadTimeout    | 5s    | Kill slow request reads     |
+| WriteTimeout   | 10s   | Kill slow response writes   |
+| IdleTimeout    | 120s  | Reclaim idle connections    |
+| ReadBufferSize | 8KB   | Limit per-connection memory |
 
 ### 7.3 Request Size Limits
 
 **Vulnerability addressed:** Resource Exhaustion (#63), Buffer Overflow
 
-| Parameter | Value |
-|-----------|-------|
-| BodyLimit | 1 MB |
-| HeaderLimit | 8 KB (Fiber default) |
-| Max URL length | 2048 bytes |
+| Parameter      | Value                |
+| -------------- | -------------------- |
+| BodyLimit      | 1 MB                 |
+| HeaderLimit    | 8 KB (Fiber default) |
+| Max URL length | 2048 bytes           |
 
 Oversized requests are rejected with 413 (body) or 431 (headers) before any processing.
 
@@ -433,16 +449,16 @@ IPs that exceed 5x the rate limit in a sliding window are automatically blacklis
 
 Every handler validates its input before processing:
 
-| Input | Validation |
-|-------|-----------|
-| Path params (`:id`) | Must be positive integer, reject non-numeric |
-| JSON body | Parsed via `BodyParser`, unknown fields ignored |
-| `name` field | Non-empty, max 255 chars, trimmed, no control chars |
-| `client_id` | Must match UUID v4 format |
-| `client_secret` | Must be 128 hex chars (64 bytes) |
-| Pagination `page` | Positive integer, default 1 |
-| Pagination `limit` | 1–100 integer, default 20 |
-| CIDR in AllowedIPs | Must parse as valid `net.IPNet` |
+| Input               | Validation                                          |
+| ------------------- | --------------------------------------------------- |
+| Path params (`:id`) | Must be positive integer, reject non-numeric        |
+| JSON body           | Parsed via `BodyParser`, unknown fields ignored     |
+| `name` field        | Non-empty, max 255 chars, trimmed, no control chars |
+| `client_id`         | Must match UUID v4 format                           |
+| `client_secret`     | Must be 128 hex chars (64 bytes)                    |
+| Pagination `page`   | Positive integer, default 1                         |
+| Pagination `limit`  | 1–100 integer, default 20                           |
+| CIDR in AllowedIPs  | Must parse as valid `net.IPNet`                     |
 
 **Rejected input returns 400 with field-level errors.** Validation errors never include the submitted value (prevents reflection attacks).
 
@@ -472,13 +488,13 @@ Every handler validates its input before processing:
 
 **Vulnerability addressed:** Information Disclosure (#33), Stack Trace Exposure
 
-| Scenario | Internal Log | Client Response |
-|----------|-------------|-----------------|
-| DB error | Full error + query | `{"error": "internal server error"}` + 500 |
-| Auth failure | Client ID + IP + reason | `{"error": "unauthorized"}` + 401 |
-| Not found | Resource type + ID | `{"error": "not found"}` + 404 |
-| Validation error | Field details | `{"errors": [{"field": "x", "message": "y"}]}` + 400 |
-| Rate limited | IP + counter | `{"error": "rate limit exceeded"}` + 429 |
+| Scenario         | Internal Log            | Client Response                                      |
+| ---------------- | ----------------------- | ---------------------------------------------------- |
+| DB error         | Full error + query      | `{"error": "internal server error"}` + 500           |
+| Auth failure     | Client ID + IP + reason | `{"error": "unauthorized"}` + 401                    |
+| Not found        | Resource type + ID      | `{"error": "not found"}` + 404                       |
+| Validation error | Field details           | `{"errors": [{"field": "x", "message": "y"}]}` + 400 |
+| Rate limited     | IP + counter            | `{"error": "rate limit exceeded"}` + 429             |
 
 **Principle:** Log everything internally, reveal nothing sensitive externally.
 
@@ -530,11 +546,11 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 
 ### 10.3 Token Lifetime Management
 
-| Token Type | TTL | Rotation | Revocation |
-|------------|-----|----------|------------|
-| Access token | 15 min | Via refresh | Immediate (blacklist) |
-| Refresh token | 24 hours | Single-use rotation | Immediate (DB) |
-| Client credentials | Indefinite | Manual re-issue | Admin suspension |
+| Token Type         | TTL        | Rotation            | Revocation            |
+| ------------------ | ---------- | ------------------- | --------------------- |
+| Access token       | 15 min     | Via refresh         | Immediate (blacklist) |
+| Refresh token      | 24 hours   | Single-use rotation | Immediate (DB)        |
+| Client credentials | Indefinite | Manual re-issue     | Admin suspension      |
 
 ---
 
@@ -542,23 +558,23 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 
 ### 11.1 Algorithm Selection Rationale
 
-| Algorithm | Use | Why This Choice |
-|-----------|-----|-----------------|
-| AES-256-GCM | Symmetric encryption | NIST-approved, authenticated encryption, hardware-accelerated (AES-NI) |
-| bcrypt (cost 12) | Password hashing | Memory-hard, GPU-resistant, adaptive cost, 10ms target |
-| HMAC-SHA256 | JWT signing | Standard for symmetric JWTs, fast, no key management complexity of RSA |
-| HKDF-SHA256 | Key derivation | RFC 5869, extracts entropy from master key with domain separation |
-| SHA-256 | Token hashing | Preimage-resistant, fast, sufficient for token integrity |
-| crypto/rand | Random generation | OS-level CSPRNG (getrandom/urandom), not predictable |
+| Algorithm        | Use                  | Why This Choice                                                        |
+| ---------------- | -------------------- | ---------------------------------------------------------------------- |
+| AES-256-GCM      | Symmetric encryption | NIST-approved, authenticated encryption, hardware-accelerated (AES-NI) |
+| bcrypt (cost 12) | Password hashing     | Memory-hard, GPU-resistant, adaptive cost, 10ms target                 |
+| HMAC-SHA256      | JWT signing          | Standard for symmetric JWTs, fast, no key management complexity of RSA |
+| HKDF-SHA256      | Key derivation       | RFC 5869, extracts entropy from master key with domain separation      |
+| SHA-256          | Token hashing        | Preimage-resistant, fast, sufficient for token integrity               |
+| crypto/rand      | Random generation    | OS-level CSPRNG (getrandom/urandom), not predictable                   |
 
 ### 11.2 What We Do NOT Use (And Why)
 
-| Avoided | Reason |
-|---------|--------|
-| MD5/SHA1 | Broken collision resistance |
-| AES-CBC | No built-in authentication, padding oracle attacks |
-| `math/rand` | Predictable, not cryptographically secure |
-| RSA for JWT | Unnecessary complexity for single-service deployment |
+| Avoided              | Reason                                                       |
+| -------------------- | ------------------------------------------------------------ |
+| MD5/SHA1             | Broken collision resistance                                  |
+| AES-CBC              | No built-in authentication, padding oracle attacks           |
+| `math/rand`          | Predictable, not cryptographically secure                    |
+| RSA for JWT          | Unnecessary complexity for single-service deployment         |
 | Argon2 for passwords | Not in Go stdlib, bcrypt is sufficient for this threat model |
 
 ### 11.3 Nonce Management
@@ -573,20 +589,20 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 
 ### 12.1 Audited Events
 
-| Event | Logged Fields | Severity |
-|-------|--------------|----------|
-| `client_created` | admin_ip, client_name | INFO |
-| `client_suspended` | admin_ip, client_id, reason | WARN |
-| `token_issued` | client_id, ip, jti | INFO |
-| `token_rotated` | client_id, ip, old_jti, new_jti | INFO |
-| `token_revoked` | client_id, ip, jti, reason | INFO |
-| `auth_failed` | ip, client_id (if provided), reason | WARN |
-| `impostor_detected` | jti, expected_ip, actual_ip | CRITICAL |
-| `refresh_reuse_detected` | client_id, ip, token_hash | CRITICAL |
-| `rate_limit_exceeded` | ip, endpoint, count | WARN |
-| `ip_blocked` | ip, rule | WARN |
-| `auto_blacklisted` | ip, duration, trigger | WARN |
-| `client_all_tokens_revoked` | client_id, admin_ip, count | WARN |
+| Event                       | Logged Fields                       | Severity |
+| --------------------------- | ----------------------------------- | -------- |
+| `client_created`            | admin_ip, client_name               | INFO     |
+| `client_suspended`          | admin_ip, client_id, reason         | WARN     |
+| `token_issued`              | client_id, ip, jti                  | INFO     |
+| `token_rotated`             | client_id, ip, old_jti, new_jti     | INFO     |
+| `token_revoked`             | client_id, ip, jti, reason          | INFO     |
+| `auth_failed`               | ip, client_id (if provided), reason | WARN     |
+| `impostor_detected`         | jti, expected_ip, actual_ip         | CRITICAL |
+| `refresh_reuse_detected`    | client_id, ip, token_hash           | CRITICAL |
+| `rate_limit_exceeded`       | ip, endpoint, count                 | WARN     |
+| `ip_blocked`                | ip, rule                            | WARN     |
+| `auto_blacklisted`          | ip, duration, trigger               | WARN     |
+| `client_all_tokens_revoked` | client_id, admin_ip, count          | WARN     |
 
 ### 12.2 Log Security
 
@@ -600,29 +616,29 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 
 ### 12.3 Alerting Triggers
 
-| Condition | Action |
-|-----------|--------|
-| `impostor_detected` | Revoke token, log CRITICAL |
-| `refresh_reuse_detected` | Revoke all client tokens, log CRITICAL |
-| 10+ `auth_failed` for same client in 5 min | Suspend client, log CRITICAL |
-| 50+ `rate_limit_exceeded` from same IP in 1 min | Auto-blacklist 10 min |
+| Condition                                       | Action                                 |
+| ----------------------------------------------- | -------------------------------------- |
+| `impostor_detected`                             | Revoke token, log CRITICAL             |
+| `refresh_reuse_detected`                        | Revoke all client tokens, log CRITICAL |
+| 10+ `auth_failed` for same client in 5 min      | Suspend client, log CRITICAL           |
+| 50+ `rate_limit_exceeded` from same IP in 1 min | Auto-blacklist 10 min                  |
 
 ---
 
 ## 13. OWASP Top 10 (2021) Mapping
 
-| OWASP Category | HanuShield Controls | Section |
-|----------------|-------------------|---------|
-| **A01: Broken Access Control** | JWT auth middleware, IP binding, token-IP verification, per-client AllowedIPs, RBAC (admin vs client), function-level access control on all endpoints | §2, §3, §5, §6 |
-| **A02: Cryptographic Failures** | AES-256-GCM at rest, bcrypt for secrets, HMAC-SHA256 JWT, HKDF key derivation, no weak algorithms, TLS 1.2+ in production | §4, §11 |
-| **A03: Injection** | GORM parameterized queries (no raw SQL), strict input validation, no shell execution, no template injection surface | §8 |
-| **A04: Insecure Design** | Threat modeling (§1), defense in depth (8 middleware layers), refresh token reuse detection, constant-time comparisons | §1, §6 |
-| **A05: Security Misconfiguration** | Security headers middleware, no debug in production, no default credentials, minimal attack surface (API-only), stripped server headers | §9 |
-| **A06: Vulnerable Components** | Minimal dependencies (4 external), no known vulnerabilities in current versions, dependency pinning in go.mod | §11 |
-| **A07: Authentication Failures** | bcrypt hashing, rate-limited auth, IP validation, MFA-ready architecture, account lockout, anti-enumeration | §2 |
-| **A08: Data Integrity Failures** | JWT signature verification, AES-GCM authenticated encryption (tamper-evident), refresh token hash integrity | §3, §4 |
-| **A09: Logging Failures** | Comprehensive audit trail, structured logging, security event alerting, log injection prevention | §12 |
-| **A10: SSRF** | No user-controlled outbound requests, no URL parameters for fetches | §8.4 |
+| OWASP Category                     | Server Controls                                                                                                                                       | Section        |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| **A01: Broken Access Control**     | JWT auth middleware, IP binding, token-IP verification, per-client AllowedIPs, RBAC (admin vs client), function-level access control on all endpoints | §2, §3, §5, §6 |
+| **A02: Cryptographic Failures**    | AES-256-GCM at rest, bcrypt for secrets, HMAC-SHA256 JWT, HKDF key derivation, no weak algorithms, TLS 1.2+ in production                             | §4, §11        |
+| **A03: Injection**                 | GORM parameterized queries (no raw SQL), strict input validation, no shell execution, no template injection surface                                   | §8             |
+| **A04: Insecure Design**           | Threat modeling (§1), defense in depth (8 middleware layers), refresh token reuse detection, constant-time comparisons                                | §1, §6         |
+| **A05: Security Misconfiguration** | Security headers middleware, no debug in production, no default credentials, minimal attack surface (API-only), stripped server headers               | §9             |
+| **A06: Vulnerable Components**     | Minimal dependencies (4 external), no known vulnerabilities in current versions, dependency pinning in go.mod                                         | §11            |
+| **A07: Authentication Failures**   | bcrypt hashing, rate-limited auth, IP validation, MFA-ready architecture, account lockout, anti-enumeration                                           | §2             |
+| **A08: Data Integrity Failures**   | JWT signature verification, AES-GCM authenticated encryption (tamper-evident), refresh token hash integrity                                           | §3, §4         |
+| **A09: Logging Failures**          | Comprehensive audit trail, structured logging, security event alerting, log injection prevention                                                      | §12            |
+| **A10: SSRF**                      | No user-controlled outbound requests, no URL parameters for fetches                                                                                   | §8.4           |
 
 ---
 
@@ -630,62 +646,62 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 
 Mapping to the Top 100 Web Vulnerabilities reference:
 
-| # | Vulnerability | Status | How Addressed |
-|---|--------------|--------|---------------|
-| 1 | SQL Injection | **Mitigated** | GORM parameterized queries, no raw SQL |
-| 2 | XSS | **Mitigated** | API-only (no HTML), JSON content-type, CSP, nosniff |
-| 5 | Command Injection | **Mitigated** | No shell/exec calls, no user input in system commands |
-| 6-8 | XML/LDAP/XPath Injection | **N/A** | No XML/LDAP/XPath processing |
-| 13 | SSTI | **N/A** | No template engine |
-| 14 | Session Fixation | **Mitigated** | Stateless JWT, token rotation on refresh |
-| 15 | Brute Force | **Mitigated** | Rate limiting (10/min auth), auto-ban, bcrypt slowness |
-| 16 | Session Hijacking | **Mitigated** | Token-IP binding, fingerprinting, short TTL, HTTPS |
-| 22 | Credential Stuffing | **Mitigated** | Rate limiting, IP validation, client-specific AllowedIPs |
-| 23 | IDOR | **Mitigated** | Authorization middleware, scoped queries per client |
-| 24 | Data Leakage | **Mitigated** | Encrypted at rest, sanitized errors, no debug info |
-| 25 | Unencrypted Storage | **Mitigated** | AES-256-GCM for sensitive fields, bcrypt for secrets |
-| 26 | Missing Security Headers | **Mitigated** | Full security header middleware (§9.2) |
-| 28 | Default Passwords | **Mitigated** | No defaults, crypto/rand generated credentials |
-| 29 | Directory Listing | **N/A** | API-only, no static file serving |
-| 30 | Unprotected API Endpoints | **Mitigated** | JWT middleware on all /api routes, admin key on /admin |
-| 31 | Open Ports | **Mitigated** | Single port, no unnecessary services |
-| 33 | Information Disclosure | **Mitigated** | Sanitized errors, stripped headers, no stack traces |
-| 34 | Unpatched Software | **Addressed** | Minimal dependencies, go.mod version pinning |
-| 35 | Misconfigured CORS | **Mitigated** | No CORS enabled (API-only, same-origin or server-to-server) |
-| 37 | XXE | **N/A** | No XML processing |
-| 40 | Inadequate Authorization | **Mitigated** | JWT claims + middleware + per-endpoint checks |
-| 41 | Privilege Escalation | **Mitigated** | Scoped tokens, admin/client separation, no sudo patterns |
-| 42 | IDOR | **Mitigated** | Authorization checks before object access |
-| 43 | Forceful Browsing | **Mitigated** | Auth required on all data endpoints |
-| 44 | Missing Function-Level Access | **Mitigated** | Server-side middleware, not just client-side |
-| 45-47 | Insecure Deserialization | **Mitigated** | JSON only (no binary serialization), strict parsing |
-| 48 | Insecure API Endpoints | **Mitigated** | OAuth-style auth, HTTPS, rate limiting |
-| 49 | API Key Exposure | **Mitigated** | Keys in env vars only, never in code/logs/responses |
-| 50 | Lack of Rate Limiting | **Mitigated** | Multi-tier rate limiting (§7.1) |
-| 51 | Inadequate Input Validation | **Mitigated** | Centralized validation (§8.2) |
-| 52 | MITM | **Mitigated** | TLS (production), HSTS, payload encryption layer |
-| 53 | Insufficient TLS | **Mitigated** | TLS 1.2+ policy, HSTS |
-| 56 | DOM-based XSS | **N/A** | No DOM (API-only) |
-| 59 | Clickjacking | **Mitigated** | X-Frame-Options: DENY, CSP frame-ancestors |
-| 61 | DDoS | **Mitigated** | Rate limiting, auto-blacklist, connection limits |
-| 62 | Application Layer DoS | **Mitigated** | Rate limiting, body size limits, timeouts |
-| 63 | Resource Exhaustion | **Mitigated** | Connection limits, body limits, query pagination |
-| 64 | Slowloris | **Mitigated** | Read/Write/Idle timeouts |
-| 66 | SSRF | **Mitigated** | No outbound requests from user input |
-| 67 | HTTP Parameter Pollution | **Mitigated** | Fiber single-value extraction, strict validation |
-| 68 | Insecure Redirects | **N/A** | No redirects in API |
-| 71 | Clickjacking | **Mitigated** | X-Frame-Options: DENY |
-| 72 | Inadequate Session Timeout | **Mitigated** | 15-min access token TTL, 24h refresh |
-| 73 | Insufficient Logging | **Mitigated** | Comprehensive audit trail (§12) |
-| 74 | Business Logic Flaws | **Mitigated** | Refresh reuse detection, atomic token rotation |
-| 75 | API Abuse | **Mitigated** | Rate limiting, IP binding, auto-blacklist |
-| 85 | Insecure "Remember Me" | **N/A** | No "remember me" — token-based only |
-| 86 | CAPTCHA Bypass | **N/A** | Server-to-server API, no CAPTCHA needed |
-| 87 | Blind SSRF | **Mitigated** | No user-controlled outbound requests |
-| 89 | MIME Sniffing | **Mitigated** | X-Content-Type-Options: nosniff |
-| 91 | CSP Bypass | **Mitigated** | Strict CSP: default-src 'none' |
-| 93 | Race Conditions | **Mitigated** | Atomic DB transactions for token rotation, SQLite serialized writes |
-| 96 | Account Enumeration | **Mitigated** | Constant-time comparison, uniform error responses, dummy bcrypt |
+| #     | Vulnerability                 | Status        | How Addressed                                                       |
+| ----- | ----------------------------- | ------------- | ------------------------------------------------------------------- |
+| 1     | SQL Injection                 | **Mitigated** | GORM parameterized queries, no raw SQL                              |
+| 2     | XSS                           | **Mitigated** | API-only (no HTML), JSON content-type, CSP, nosniff                 |
+| 5     | Command Injection             | **Mitigated** | No shell/exec calls, no user input in system commands               |
+| 6-8   | XML/LDAP/XPath Injection      | **N/A**       | No XML/LDAP/XPath processing                                        |
+| 13    | SSTI                          | **N/A**       | No template engine                                                  |
+| 14    | Session Fixation              | **Mitigated** | Stateless JWT, token rotation on refresh                            |
+| 15    | Brute Force                   | **Mitigated** | Rate limiting (10/min auth), auto-ban, bcrypt slowness              |
+| 16    | Session Hijacking             | **Mitigated** | Token-IP binding, fingerprinting, short TTL, HTTPS                  |
+| 22    | Credential Stuffing           | **Mitigated** | Rate limiting, IP validation, client-specific AllowedIPs            |
+| 23    | IDOR                          | **Mitigated** | Authorization middleware, scoped queries per client                 |
+| 24    | Data Leakage                  | **Mitigated** | Encrypted at rest, sanitized errors, no debug info                  |
+| 25    | Unencrypted Storage           | **Mitigated** | AES-256-GCM for sensitive fields, bcrypt for secrets                |
+| 26    | Missing Security Headers      | **Mitigated** | Full security header middleware (§9.2)                              |
+| 28    | Default Passwords             | **Mitigated** | No defaults, crypto/rand generated credentials                      |
+| 29    | Directory Listing             | **N/A**       | API-only, no static file serving                                    |
+| 30    | Unprotected API Endpoints     | **Mitigated** | JWT middleware on all /api routes, admin key on /admin              |
+| 31    | Open Ports                    | **Mitigated** | Single port, no unnecessary services                                |
+| 33    | Information Disclosure        | **Mitigated** | Sanitized errors, stripped headers, no stack traces                 |
+| 34    | Unpatched Software            | **Addressed** | Minimal dependencies, go.mod version pinning                        |
+| 35    | Misconfigured CORS            | **Mitigated** | No CORS enabled (API-only, same-origin or server-to-server)         |
+| 37    | XXE                           | **N/A**       | No XML processing                                                   |
+| 40    | Inadequate Authorization      | **Mitigated** | JWT claims + middleware + per-endpoint checks                       |
+| 41    | Privilege Escalation          | **Mitigated** | Scoped tokens, admin/client separation, no sudo patterns            |
+| 42    | IDOR                          | **Mitigated** | Authorization checks before object access                           |
+| 43    | Forceful Browsing             | **Mitigated** | Auth required on all data endpoints                                 |
+| 44    | Missing Function-Level Access | **Mitigated** | Server-side middleware, not just client-side                        |
+| 45-47 | Insecure Deserialization      | **Mitigated** | JSON only (no binary serialization), strict parsing                 |
+| 48    | Insecure API Endpoints        | **Mitigated** | OAuth-style auth, HTTPS, rate limiting                              |
+| 49    | API Key Exposure              | **Mitigated** | Keys in env vars only, never in code/logs/responses                 |
+| 50    | Lack of Rate Limiting         | **Mitigated** | Multi-tier rate limiting (§7.1)                                     |
+| 51    | Inadequate Input Validation   | **Mitigated** | Centralized validation (§8.2)                                       |
+| 52    | MITM                          | **Mitigated** | TLS (production), HSTS, payload encryption layer                    |
+| 53    | Insufficient TLS              | **Mitigated** | TLS 1.2+ policy, HSTS                                               |
+| 56    | DOM-based XSS                 | **N/A**       | No DOM (API-only)                                                   |
+| 59    | Clickjacking                  | **Mitigated** | X-Frame-Options: DENY, CSP frame-ancestors                          |
+| 61    | DDoS                          | **Mitigated** | Rate limiting, auto-blacklist, connection limits                    |
+| 62    | Application Layer DoS         | **Mitigated** | Rate limiting, body size limits, timeouts                           |
+| 63    | Resource Exhaustion           | **Mitigated** | Connection limits, body limits, query pagination                    |
+| 64    | Slowloris                     | **Mitigated** | Read/Write/Idle timeouts                                            |
+| 66    | SSRF                          | **Mitigated** | No outbound requests from user input                                |
+| 67    | HTTP Parameter Pollution      | **Mitigated** | Fiber single-value extraction, strict validation                    |
+| 68    | Insecure Redirects            | **N/A**       | No redirects in API                                                 |
+| 71    | Clickjacking                  | **Mitigated** | X-Frame-Options: DENY                                               |
+| 72    | Inadequate Session Timeout    | **Mitigated** | 15-min access token TTL, 24h refresh                                |
+| 73    | Insufficient Logging          | **Mitigated** | Comprehensive audit trail (§12)                                     |
+| 74    | Business Logic Flaws          | **Mitigated** | Refresh reuse detection, atomic token rotation                      |
+| 75    | API Abuse                     | **Mitigated** | Rate limiting, IP binding, auto-blacklist                           |
+| 85    | Insecure "Remember Me"        | **N/A**       | No "remember me" — token-based only                                 |
+| 86    | CAPTCHA Bypass                | **N/A**       | Server-to-server API, no CAPTCHA needed                             |
+| 87    | Blind SSRF                    | **Mitigated** | No user-controlled outbound requests                                |
+| 89    | MIME Sniffing                 | **Mitigated** | X-Content-Type-Options: nosniff                                     |
+| 91    | CSP Bypass                    | **Mitigated** | Strict CSP: default-src 'none'                                      |
+| 93    | Race Conditions               | **Mitigated** | Atomic DB transactions for token rotation, SQLite serialized writes |
+| 96    | Account Enumeration           | **Mitigated** | Constant-time comparison, uniform error responses, dummy bcrypt     |
 
 ---
 
@@ -735,31 +751,31 @@ openssl rand -hex 64
 
 ## Appendix A: Security Response Codes
 
-| Status | Meaning | When Used |
-|--------|---------|-----------|
-| 400 | Bad Request | Invalid input, validation failure |
-| 401 | Unauthorized | Missing/invalid/expired/revoked token |
-| 403 | Forbidden | IP blocked, client suspended |
-| 404 | Not Found | Resource doesn't exist |
-| 413 | Payload Too Large | Body exceeds limit |
-| 429 | Too Many Requests | Rate limit exceeded |
-| 500 | Internal Server Error | Unexpected server failure |
+| Status | Meaning               | When Used                             |
+| ------ | --------------------- | ------------------------------------- |
+| 400    | Bad Request           | Invalid input, validation failure     |
+| 401    | Unauthorized          | Missing/invalid/expired/revoked token |
+| 403    | Forbidden             | IP blocked, client suspended          |
+| 404    | Not Found             | Resource doesn't exist                |
+| 413    | Payload Too Large     | Body exceeds limit                    |
+| 429    | Too Many Requests     | Rate limit exceeded                   |
+| 500    | Internal Server Error | Unexpected server failure             |
 
 ---
 
 ## Appendix B: Environment Variables
 
-| Variable | Required | Description | Example |
-|----------|----------|-------------|---------|
-| `ENCRYPTION_KEY` | Yes | AES-256 master key (hex) | `openssl rand -hex 32` |
-| `JWT_SECRET` | Yes | JWT HMAC signing key (hex) | `openssl rand -hex 64` |
-| `ADMIN_MASTER_KEY` | Yes | Admin endpoint auth | `openssl rand -hex 64` |
-| `DB_PATH` | No | SQLite path (default: `./data/app.db`) | `/var/lib/hanushield/app.db` |
-| `PORT` | No | Server port (default: 3000) | `8080` |
-| `ENVIRONMENT` | No | Runtime env (default: `dev`) | `prod` |
-| `LOG_LEVEL` | No | Log verbosity (default: `info`) | `warn` |
-| `IP_MODE` | No | IP filtering mode (default: `off`) | `whitelist` |
-| `TRUSTED_PROXIES` | No | Comma-separated proxy IPs | `10.0.0.1,10.0.0.2` |
-| `GLOBAL_ALLOWED_IPS` | No | Comma-separated CIDRs | `192.168.0.0/16` |
-| `TOKEN_BINDING_MODE` | No | IP binding strictness (default: `strict`) | `subnet` |
-| `BODY_LIMIT` | No | Max body bytes (default: 1048576) | `2097152` |
+| Variable             | Required | Description                               | Example                    |
+| -------------------- | -------- | ----------------------------------------- | -------------------------- |
+| `ENCRYPTION_KEY`     | Yes      | AES-256 master key (hex)                  | `openssl rand -hex 32`     |
+| `JWT_SECRET`         | Yes      | JWT HMAC signing key (hex)                | `openssl rand -hex 64`     |
+| `ADMIN_MASTER_KEY`   | Yes      | Admin endpoint auth                       | `openssl rand -hex 64`     |
+| `DB_PATH`            | No       | SQLite path (default: `./data/app.db`)    | `/var/lib/app_name/app.db` |
+| `PORT`               | No       | Server port (default: 3000)               | `8080`                     |
+| `ENVIRONMENT`        | No       | Runtime env (default: `dev`)              | `prod`                     |
+| `LOG_LEVEL`          | No       | Log verbosity (default: `info`)           | `warn`                     |
+| `IP_MODE`            | No       | IP filtering mode (default: `off`)        | `whitelist`                |
+| `TRUSTED_PROXIES`    | No       | Comma-separated proxy IPs                 | `10.0.0.1,10.0.0.2`        |
+| `GLOBAL_ALLOWED_IPS` | No       | Comma-separated CIDRs                     | `192.168.0.0/16`           |
+| `TOKEN_BINDING_MODE` | No       | IP binding strictness (default: `strict`) | `subnet`                   |
+| `BODY_LIMIT`         | No       | Max body bytes (default: 1048576)         | `2097152`                  |

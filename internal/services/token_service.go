@@ -4,9 +4,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -21,11 +21,11 @@ import (
 const refreshTokenSize = 64
 
 var (
-	ErrTokenNotFound    = errors.New("token not found")
-	ErrTokenRevoked     = errors.New("token revoked")
-	ErrTokenExpired     = errors.New("token expired")
-	ErrIPNotAllowed     = errors.New("IP not in allowed ranges")
-	ErrRefreshReuse     = errors.New("refresh token reuse detected")
+	ErrTokenNotFound = errors.New("token not found")
+	ErrTokenRevoked  = errors.New("token revoked")
+	ErrTokenExpired  = errors.New("token expired")
+	ErrIPNotAllowed  = errors.New("IP not in allowed ranges")
+	ErrRefreshReuse  = errors.New("refresh token reuse detected")
 )
 
 // TokenService handles JWT issuance, refresh, and revocation.
@@ -58,12 +58,8 @@ func ParseAllowedIPs(s string) []string {
 		return nil
 	}
 	var out []string
-	s = strings.Trim(s, "[]")
-	for _, p := range strings.Split(s, ",") {
-		cidr := strings.Trim(strings.TrimSpace(p), "\"")
-		if cidr != "" {
-			out = append(out, cidr)
-		}
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil
 	}
 	return out
 }
@@ -268,6 +264,13 @@ func (s *TokenService) loadRevokedJTIsForClient(clientID string) {
 	}
 }
 
+// CleanupExpired removes old, already-revoked tokens to keep the table small.
+func (s *TokenService) CleanupExpired() {
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	s.DB.Where("expires_at < ? AND revoked = ?", cutoff, true).
+		Delete(&models.Token{})
+}
+
 // RevokeToken revokes a token by JTI or refresh token.
 func (s *TokenService) RevokeToken(accessToken string, bodyToken string, ip string) error {
 	now := time.Now()
@@ -303,10 +306,15 @@ func (s *TokenService) RevokeAllForClient(clientDBID uint) error {
 	now := time.Now()
 	var tokens []models.Token
 	s.DB.Where("client_db_id = ? AND revoked = ?", clientDBID, false).Find(&tokens)
-	for _, t := range tokens {
-		s.DB.Model(&t).Updates(map[string]interface{}{
+	if len(tokens) == 0 {
+		return nil
+	}
+	s.DB.Model(&models.Token{}).
+		Where("client_db_id = ? AND revoked = ?", clientDBID, false).
+		Updates(map[string]interface{}{
 			"revoked": true, "revoked_at": now, "revoked_reason": "admin_revoke_all",
 		})
+	for _, t := range tokens {
 		s.Blacklist.Add(t.JTI, t.ExpiresAt)
 	}
 	return nil
@@ -400,8 +408,8 @@ func sameSubnet(a, b string) bool {
 		}
 		return ipa4[0] == ipb4[0] && ipa4[1] == ipb4[1] && ipa4[2] == ipb4[2]
 	}
-	// IPv6: compare first 8 bytes (/64)
-	for i := 0; i < 8 && i < len(ipa) && i < len(ipb); i++ {
+	// IPv6: compare first 6 bytes (/48)
+	for i := 0; i < 6 && i < len(ipa) && i < len(ipb); i++ {
 		if ipa[i] != ipb[i] {
 			return false
 		}

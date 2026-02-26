@@ -96,11 +96,19 @@ func (a *AuditLogger) Middleware() fiber.Handler {
 
 		requestID, _ := c.Locals("request_id").(string)
 		clientID, _ := c.Locals("client_id").(string)
+		severity := "info"
+		switch {
+		case status >= fiber.StatusInternalServerError:
+			severity = "error"
+		case status >= fiber.StatusBadRequest:
+			severity = "warn"
+		}
 		detailJSON, _ := json.Marshal(fiber.Map{
 			"method":     c.Method(),
 			"path":       c.Path(),
 			"status":     status,
 			"latency_ms": time.Since(start).Milliseconds(),
+			"severity":   severity,
 		})
 		entry := models.AuditLog{
 			RequestID: requestID,
@@ -122,26 +130,53 @@ func (a *AuditLogger) Middleware() fiber.Handler {
 }
 
 func auditActionFor(method, path string, status int) (string, bool) {
-	if status >= fiber.StatusBadRequest {
-		return "", false
-	}
 	switch {
 	case method == fiber.MethodPost && path == "/auth/token":
+		if status >= fiber.StatusBadRequest {
+			return "auth_failed", true
+		}
 		return "token_issued", true
 	case method == fiber.MethodPost && path == "/auth/token/refresh":
+		if status >= fiber.StatusBadRequest {
+			return "token_refresh_failed", true
+		}
 		return "token_refreshed", true
 	case method == fiber.MethodPost && path == "/auth/token/revoke":
+		if status >= fiber.StatusBadRequest {
+			return "token_revoke_failed", true
+		}
 		return "token_revoked", true
 	case method == fiber.MethodPost && path == "/admin/clients":
+		if status >= fiber.StatusBadRequest {
+			return "client_create_failed", true
+		}
 		return "client_created", true
 	case method == fiber.MethodPost && strings.HasPrefix(path, "/admin/clients/") && strings.HasSuffix(path, "/revoke-all"):
+		if status >= fiber.StatusBadRequest {
+			return "client_revoke_all_failed", true
+		}
 		return "client_revoke_all", true
 	case method == fiber.MethodPost && path == "/api/items":
+		if status >= fiber.StatusBadRequest {
+			return "item_create_failed", true
+		}
 		return "item_created", true
 	case method == fiber.MethodPut && strings.HasPrefix(path, "/api/items/"):
+		if status >= fiber.StatusBadRequest {
+			return "item_update_failed", true
+		}
 		return "item_updated", true
 	case method == fiber.MethodDelete && strings.HasPrefix(path, "/api/items/"):
+		if status >= fiber.StatusBadRequest {
+			return "item_delete_failed", true
+		}
 		return "item_deleted", true
+	case status == fiber.StatusTooManyRequests:
+		return "rate_limit_exceeded", true
+	case status == fiber.StatusForbidden:
+		// IP validator marks blocked requests via c.Locals("ip_blocked", true),
+		// but we don't have access here; treat all 403s from early middleware as ip_blocked.
+		return "ip_blocked", true
 	default:
 		return "", false
 	}

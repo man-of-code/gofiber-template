@@ -6,6 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -18,15 +21,74 @@ const secretSize = 64
 const bcryptCost = 12
 
 var (
-	ErrClientNotFound   = errors.New("client not found")
-	ErrInvalidSecret    = errors.New("invalid client secret")
-	ErrClientSuspended  = errors.New("client suspended or revoked")
+	ErrClientNotFound  = errors.New("client not found")
+	ErrInvalidSecret   = errors.New("invalid client secret")
+	ErrClientSuspended = errors.New("client suspended or revoked")
 )
+
+var dummyHash []byte
+
+func init() {
+	h, err := bcrypt.GenerateFromPassword([]byte("dummy"), bcryptCost)
+	if err == nil {
+		dummyHash = h
+	}
+}
+
+type failCount struct {
+	count    int
+	windowAt time.Time
+}
+
+type failureTracker struct {
+	mu     sync.Mutex
+	counts map[string]*failCount // keyed by client_id_hash
+	window time.Duration
+	limit  int
+}
+
+func newFailureTracker(window time.Duration, limit int) *failureTracker {
+	return &failureTracker{
+		counts: make(map[string]*failCount),
+		window: window,
+		limit:  limit,
+	}
+}
+
+// inc increments the failure count and returns true if the threshold is reached.
+func (t *failureTracker) inc(key string) bool {
+	now := time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e, ok := t.counts[key]
+	if !ok || now.Sub(e.windowAt) > t.window {
+		t.counts[key] = &failCount{count: 1, windowAt: now}
+		return false
+	}
+	e.count++
+	return e.count >= t.limit
+}
+
+func (t *failureTracker) reset(key string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.counts, key)
+}
 
 // AuthService handles client registration and credential validation.
 type AuthService struct {
 	DB            *gorm.DB
 	CryptoService *CryptoService
+	failures      *failureTracker
+}
+
+// NewAuthService constructs an AuthService with failure tracking.
+func NewAuthService(db *gorm.DB, crypto *CryptoService) *AuthService {
+	return &AuthService{
+		DB:            db,
+		CryptoService: crypto,
+		failures:      newFailureTracker(5*time.Minute, 10),
+	}
 }
 
 // clientIDHash returns SHA256 of client_id for lookup.
@@ -89,15 +151,35 @@ func (s *AuthService) ValidateCredentials(clientIDPlain string, clientSecret str
 	var client models.Client
 	if err := s.DB.Where("client_id_hash = ?", hash).First(&client).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
+			if dummyHash != nil {
+				_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(clientSecret))
+			}
 			return "", ErrClientNotFound
 		}
 		return "", err
 	}
 	if client.Status != "active" {
+		// Normalize timing with valid/suspended clients.
+		_ = bcrypt.CompareHashAndPassword([]byte(client.SecretHash), []byte(clientSecret))
 		return "", ErrClientSuspended
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(client.SecretHash), []byte(clientSecret)); err != nil {
+		if s.failures != nil && s.failures.inc(hash) {
+			now := time.Now()
+			if err := s.DB.Model(&client).Updates(map[string]interface{}{
+				"status": "suspended",
+			}).Error; err == nil {
+				slog.Warn("client_auto_suspended",
+					"client_id_hash", hash,
+					"client_id", client.ID,
+					"at", now,
+				)
+			}
+		}
 		return "", ErrInvalidSecret
+	}
+	if s.failures != nil {
+		s.failures.reset(hash)
 	}
 	return clientIDPlain, nil
 }

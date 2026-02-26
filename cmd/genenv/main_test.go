@@ -30,7 +30,7 @@ func TestValidateModeWithValidEnv(t *testing.T) {
 
 	content := strings.Join([]string{
 		"ENCRYPTION_KEY=" + strings.Repeat("a", 64),
-		"JWT_SECRET=" + strings.Repeat("b", 64),
+		"JWT_SECRET=" + strings.Repeat("b", 128),
 		"ADMIN_MASTER_KEY=admin-key",
 	}, "\n") + "\n"
 
@@ -77,4 +77,3 @@ func TestValidateModeReportsIssues(t *testing.T) {
 		}
 	}
 }
-

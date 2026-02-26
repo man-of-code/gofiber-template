@@ -36,7 +36,7 @@ func requestIDFromTrustedProxy(c *fiber.Ctx, trusted []*net.IPNet) bool {
 	}
 	xff := c.Get("X-Forwarded-For")
 	if xff == "" {
-		return len(trusted) == 0
+		return false // no trusted proxies configured = never trust incoming ID
 	}
 	parts := strings.Split(xff, ",")
 	proxyIP := strings.TrimSpace(parts[len(parts)-1])

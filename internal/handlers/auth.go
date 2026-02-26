@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"crypto/subtle"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -17,6 +18,13 @@ type AuthHandler struct {
 	Config       *config.Config
 }
 
+func constantTimeEqual(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 // RegisterClientRequest is the JSON body for client registration.
 type RegisterClientRequest struct {
 	Name       string   `json:"name"`
@@ -25,12 +33,12 @@ type RegisterClientRequest struct {
 
 // RegisterClient creates a new client (admin only).
 func (h *AuthHandler) RegisterClient(c *fiber.Ctx) error {
-	adminKey := c.Get("X-Admin-Key")
-	if adminKey == "" || adminKey != h.Config.AdminMasterKey {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
-	}
 	if h.Config.AdminMasterKey == "" {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "admin not configured")
+	}
+	adminKey := c.Get("X-Admin-Key")
+	if !constantTimeEqual(adminKey, h.Config.AdminMasterKey) {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
 
 	var req RegisterClientRequest
@@ -151,12 +159,12 @@ func (h *AuthHandler) RevokeToken(c *fiber.Ctx) error {
 
 // RevokeAllClientTokens revokes all tokens for a client (admin only).
 func (h *AuthHandler) RevokeAllClientTokens(c *fiber.Ctx) error {
-	adminKey := c.Get("X-Admin-Key")
-	if adminKey == "" || adminKey != h.Config.AdminMasterKey {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
-	}
 	if h.Config.AdminMasterKey == "" {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "admin not configured")
+	}
+	adminKey := c.Get("X-Admin-Key")
+	if !constantTimeEqual(adminKey, h.Config.AdminMasterKey) {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
 	}
 	id, err := validator.ParsePositiveUint(c.Params("id"), "id")
 	if err != nil {

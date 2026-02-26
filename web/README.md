@@ -14,7 +14,7 @@ This app is a development test client for the GoFiber API in this repository.
 When request encryption is enabled:
 
 - Browser derives the payload transport key from `VITE_ENCRYPTION_KEY` using HKDF-SHA256
-- HKDF salt: `hanushield-v1`
+- HKDF salt: `VITE_APP_ID` (default `gofiber_template`); **must match the server’s `APP_ID`** or decryption will fail
 - HKDF info/context: `payload-transport`
 - Payload format: `hex(nonce(12B) || ciphertext+tag)`
 - Header `X-Encrypted-Payload: true` is sent for encrypted requests
@@ -42,9 +42,8 @@ npm install
 VITE_ENCRYPTION_KEY=<same value as ENCRYPTION_KEY>
 VITE_ADMIN_KEY=<same value as ADMIN_MASTER_KEY>
 
-# Optional: convenience defaults for the Admin panel
-VITE_DEFAULT_CLIENT_NAME=acme-client
-VITE_DEFAULT_ALLOWED_IPS=10.0.0.0/8
+# Required for encrypted payloads: must match server APP_ID (default gofiber_template)
+VITE_APP_ID=gofiber_template
 ```
 
 3. Run servers:

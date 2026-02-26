@@ -1,124 +1,146 @@
-const NONCE_SIZE = 12
-const SALT = new TextEncoder().encode('hanushield-v1')
-const INFO = new TextEncoder().encode('payload-transport')
+const NONCE_SIZE = 12;
+/** HKDF info; must match backend ContextPayloadTransport. */
+const INFO = new TextEncoder().encode("payload-transport");
+/** Default app ID for HKDF salt when VITE_APP_ID is unset; must match server APP_ID for decryption to work. */
+const DEFAULT_APP_ID = "gofiber_template";
 
-let cachedKey: CryptoKey | null = null
+let cachedKey: CryptoKey | null = null;
 
 function hexToBytes(hex: string): Uint8Array {
-  const normalized = hex.trim().toLowerCase()
-  if (normalized.length === 0 || normalized.length % 2 !== 0 || !/^[0-9a-f]+$/.test(normalized)) {
-    throw new Error('invalid hex payload')
+  const normalized = hex.trim().toLowerCase();
+  if (
+    normalized.length === 0 ||
+    normalized.length % 2 !== 0 ||
+    !/^[0-9a-f]+$/.test(normalized)
+  ) {
+    throw new Error("invalid hex payload");
   }
-  const bytes = new Uint8Array(normalized.length / 2)
+  const bytes = new Uint8Array(normalized.length / 2);
   for (let i = 0; i < normalized.length; i += 2) {
-    bytes[i / 2] = Number.parseInt(normalized.slice(i, i + 2), 16)
+    bytes[i / 2] = Number.parseInt(normalized.slice(i, i + 2), 16);
   }
-  return bytes
+  return bytes;
 }
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
-async function derivePayloadKey(masterHex: string): Promise<CryptoKey> {
-  const masterBytes = hexToBytes(masterHex)
+async function derivePayloadKey(
+  masterHex: string,
+  appID: string,
+): Promise<CryptoKey> {
+  const masterBytes = hexToBytes(masterHex);
   if (masterBytes.length !== 32) {
-    throw new Error('VITE_ENCRYPTION_KEY must be 64 hex chars (32 bytes)')
+    throw new Error("VITE_ENCRYPTION_KEY must be 64 hex chars (32 bytes)");
   }
-  const hkdfKey = await crypto.subtle.importKey('raw', masterBytes.buffer as ArrayBuffer, 'HKDF', false, ['deriveBits'])
+  const salt = new TextEncoder().encode(appID);
+  const hkdfKey = await crypto.subtle.importKey(
+    "raw",
+    masterBytes.buffer as ArrayBuffer,
+    "HKDF",
+    false,
+    ["deriveBits"],
+  );
   const bits = await crypto.subtle.deriveBits(
     {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: SALT,
+      name: "HKDF",
+      hash: "SHA-256",
+      salt,
       info: INFO,
     },
     hkdfKey,
     256,
-  )
+  );
 
-  return crypto.subtle.importKey('raw', bits, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt'])
+  return crypto.subtle.importKey("raw", bits, { name: "AES-GCM" }, false, [
+    "encrypt",
+    "decrypt",
+  ]);
 }
 
 export async function getPayloadKey(): Promise<CryptoKey> {
   if (cachedKey) {
-    return cachedKey
+    return cachedKey;
   }
 
-  const masterHex = import.meta.env.VITE_ENCRYPTION_KEY as string | undefined
+  const masterHex = import.meta.env.VITE_ENCRYPTION_KEY as string | undefined;
   if (!masterHex) {
-    throw new Error('VITE_ENCRYPTION_KEY is required for encrypted requests')
+    throw new Error("VITE_ENCRYPTION_KEY is required for encrypted requests");
   }
 
-  cachedKey = await derivePayloadKey(masterHex)
-  return cachedKey
+  const appID =
+    (import.meta.env.VITE_APP_ID as string | undefined)?.trim() ||
+    DEFAULT_APP_ID;
+  cachedKey = await derivePayloadKey(masterHex, appID);
+  return cachedKey;
 }
 
 export async function encryptPayload(value: unknown): Promise<string> {
-  const key = await getPayloadKey()
-  const nonce = crypto.getRandomValues(new Uint8Array(NONCE_SIZE))
-  const plaintext = new TextEncoder().encode(JSON.stringify(value ?? {}))
+  const key = await getPayloadKey();
+  const nonce = crypto.getRandomValues(new Uint8Array(NONCE_SIZE));
+  const plaintext = new TextEncoder().encode(JSON.stringify(value ?? {}));
 
   const encrypted = await crypto.subtle.encrypt(
     {
-      name: 'AES-GCM',
+      name: "AES-GCM",
       iv: nonce,
     },
     key,
     plaintext,
-  )
+  );
 
-  const encryptedBytes = new Uint8Array(encrypted)
-  const merged = new Uint8Array(nonce.length + encryptedBytes.length)
-  merged.set(nonce, 0)
-  merged.set(encryptedBytes, nonce.length)
+  const encryptedBytes = new Uint8Array(encrypted);
+  const merged = new Uint8Array(nonce.length + encryptedBytes.length);
+  merged.set(nonce, 0);
+  merged.set(encryptedBytes, nonce.length);
 
-  return bytesToHex(merged)
+  return bytesToHex(merged);
 }
 
 export async function decryptPayload(rawHex: string): Promise<unknown> {
-  const key = await getPayloadKey()
-  const payload = hexToBytes(rawHex)
+  const key = await getPayloadKey();
+  const payload = hexToBytes(rawHex);
   if (payload.length <= NONCE_SIZE) {
-    throw new Error('encrypted payload is too short')
+    throw new Error("encrypted payload is too short");
   }
 
-  const nonce = payload.slice(0, NONCE_SIZE)
-  const ciphertext = payload.slice(NONCE_SIZE)
+  const nonce = payload.slice(0, NONCE_SIZE);
+  const ciphertext = payload.slice(NONCE_SIZE);
 
   const plaintext = await crypto.subtle.decrypt(
     {
-      name: 'AES-GCM',
+      name: "AES-GCM",
       iv: nonce,
     },
     key,
     ciphertext,
-  )
+  );
 
-  const decoded = new TextDecoder().decode(plaintext)
-  return decoded.length === 0 ? null : JSON.parse(decoded)
+  const decoded = new TextDecoder().decode(plaintext);
+  return decoded.length === 0 ? null : JSON.parse(decoded);
 }
 
 export function safePretty(value: unknown): string {
   if (value === undefined) {
-    return ''
+    return "";
   }
-  if (typeof value === 'string') {
-    return value
+  if (typeof value === "string") {
+    return value;
   }
   try {
-    return JSON.stringify(value, null, 2)
+    return JSON.stringify(value, null, 2);
   } catch {
-    return String(value)
+    return String(value);
   }
 }
 
 export function headersToRecord(headers: Headers): Record<string, string> {
-  const result: Record<string, string> = {}
+  const result: Record<string, string> = {};
   headers.forEach((value, key) => {
-    result[key] = value
-  })
-  return result
+    result[key] = value;
+  });
+  return result;
 }

@@ -27,9 +27,7 @@ func main() {
 	if cfg.EncryptionKey == "" {
 		log.Fatal("ENCRYPTION_KEY required (32 bytes hex-encoded)")
 	}
-	if cfg.AppID == "" {
-		log.Fatal("APP_ID required (unique per application for key derivation)")
-	}
+	// APP_ID defaults to gofiber_template in config; set explicitly for key separation across apps.
 	if cfg.JWTSecret == "" || len(cfg.JWTSecret) < 64 {
 		log.Fatal("JWT_SECRET required (min 64 bytes)")
 	}

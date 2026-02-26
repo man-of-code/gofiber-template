@@ -95,7 +95,7 @@ func Load() *Config {
 	return &Config{
 		DBPath:            dbPath,
 		Port:              port,
-		AppID:             os.Getenv("APP_ID"),
+		AppID:             getEnv("APP_ID", "gofiber_template"),
 		AdminMasterKey:    os.Getenv("ADMIN_MASTER_KEY"),
 		JWTSecret:         os.Getenv("JWT_SECRET"),
 		AccessTokenTTL:    accessTTL,

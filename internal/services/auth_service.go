@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -112,7 +113,7 @@ func (s *AuthService) RegisterClient(name string, allowedIPs []string) (*Registe
 	}
 	clientSecret := hex.EncodeToString(secretBytes)
 
-	secretHash, err := bcrypt.GenerateFromPassword([]byte(clientSecret), bcryptCost)
+	secretHash, err := bcrypt.GenerateFromPassword(secretBytes, bcryptCost)
 	if err != nil {
 		return nil, err
 	}
@@ -152,18 +153,24 @@ func (s *AuthService) ValidateCredentials(clientIDPlain string, clientSecret str
 	if err := s.DB.Where("client_id_hash = ?", hash).First(&client).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			if dummyHash != nil {
-				_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(clientSecret))
+				_ = bcrypt.CompareHashAndPassword(dummyHash, []byte("dummy"))
 			}
 			return "", ErrClientNotFound
 		}
 		return "", err
 	}
+	secretBytes, err := decodeClientSecret(clientSecret)
+	if err != nil {
+		// Normalize timing for invalid formats.
+		_ = bcrypt.CompareHashAndPassword([]byte(client.SecretHash), []byte("dummy"))
+		return "", ErrInvalidSecret
+	}
 	if client.Status != "active" {
 		// Normalize timing with valid/suspended clients.
-		_ = bcrypt.CompareHashAndPassword([]byte(client.SecretHash), []byte(clientSecret))
+		_ = bcrypt.CompareHashAndPassword([]byte(client.SecretHash), secretBytes)
 		return "", ErrClientSuspended
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(client.SecretHash), []byte(clientSecret)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(client.SecretHash), secretBytes); err != nil {
 		if s.failures != nil && s.failures.inc(hash) {
 			now := time.Now()
 			if err := s.DB.Model(&client).Updates(map[string]interface{}{
@@ -184,6 +191,18 @@ func (s *AuthService) ValidateCredentials(clientIDPlain string, clientSecret str
 	return clientIDPlain, nil
 }
 
+func decodeClientSecret(secret string) ([]byte, error) {
+	secret = strings.TrimSpace(secret)
+	if len(secret) != secretSize*2 {
+		return nil, errors.New("invalid secret length")
+	}
+	b, err := hex.DecodeString(secret)
+	if err != nil || len(b) != secretSize {
+		return nil, errors.New("invalid secret format")
+	}
+	return b, nil
+}
+
 // GetClientByPlainID fetches a client by plaintext client_id (after validation).
 func (s *AuthService) GetClientByPlainID(clientIDPlain string) (*models.Client, error) {
 	hash := clientIDHash(clientIDPlain)
@@ -192,4 +211,107 @@ func (s *AuthService) GetClientByPlainID(clientIDPlain string) (*models.Client, 
 		return nil, err
 	}
 	return &client, nil
+}
+
+// ClientView is a safe projection of client data for admin use.
+type ClientView struct {
+	ID         uint
+	Name       string
+	ClientID   string
+	AllowedIPs []string
+	Status     string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// ListClients returns all clients with decrypted client_id.
+func (s *AuthService) ListClients() ([]*ClientView, error) {
+	var clients []models.Client
+	if err := s.DB.Order("id DESC").Find(&clients).Error; err != nil {
+		return nil, err
+	}
+	views := make([]*ClientView, 0, len(clients))
+	for _, c := range clients {
+		clientID, err := s.CryptoService.DecryptClientID(c.ClientIDEnc)
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, &ClientView{
+			ID:         c.ID,
+			Name:       c.Name,
+			ClientID:   clientID,
+			AllowedIPs: ParseAllowedIPs(c.AllowedIPs),
+			Status:     c.Status,
+			CreatedAt:  c.CreatedAt,
+			UpdatedAt:  c.UpdatedAt,
+		})
+	}
+	return views, nil
+}
+
+// GetClient returns one client by ID with decrypted client_id.
+func (s *AuthService) GetClient(id uint) (*ClientView, error) {
+	var client models.Client
+	if err := s.DB.First(&client, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrClientNotFound
+		}
+		return nil, err
+	}
+	clientID, err := s.CryptoService.DecryptClientID(client.ClientIDEnc)
+	if err != nil {
+		return nil, err
+	}
+	return &ClientView{
+		ID:         client.ID,
+		Name:       client.Name,
+		ClientID:   clientID,
+		AllowedIPs: ParseAllowedIPs(client.AllowedIPs),
+		Status:     client.Status,
+		CreatedAt:  client.CreatedAt,
+		UpdatedAt:  client.UpdatedAt,
+	}, nil
+}
+
+// UpdateClient updates mutable fields and returns the updated view.
+func (s *AuthService) UpdateClient(id uint, name string, allowedIPs []string, status string) (*ClientView, error) {
+	var client models.Client
+	if err := s.DB.First(&client, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, ErrClientNotFound
+		}
+		return nil, err
+	}
+	updates := map[string]interface{}{}
+	if strings.TrimSpace(name) != "" {
+		updates["name"] = name
+	}
+	if allowedIPs != nil {
+		allowedIPsJSON, err := json.Marshal(allowedIPs)
+		if err != nil {
+			return nil, err
+		}
+		updates["allowed_ips"] = string(allowedIPsJSON)
+	}
+	if status != "" {
+		updates["status"] = status
+	}
+	if len(updates) > 0 {
+		if err := s.DB.Model(&client).Updates(updates).Error; err != nil {
+			return nil, err
+		}
+	}
+	return s.GetClient(id)
+}
+
+// DeleteClient removes a client (soft delete via gorm.DeletedAt).
+func (s *AuthService) DeleteClient(id uint) error {
+	res := s.DB.Delete(&models.Client{}, id)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrClientNotFound
+	}
+	return nil
 }

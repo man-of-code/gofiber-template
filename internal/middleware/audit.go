@@ -151,6 +151,16 @@ func auditActionFor(method, path string, status int) (string, bool) {
 			return "client_create_failed", true
 		}
 		return "client_created", true
+	case method == fiber.MethodPut && strings.HasPrefix(path, "/admin/clients/"):
+		if status >= fiber.StatusBadRequest {
+			return "client_update_failed", true
+		}
+		return "client_updated", true
+	case method == fiber.MethodDelete && strings.HasPrefix(path, "/admin/clients/"):
+		if status >= fiber.StatusBadRequest {
+			return "client_delete_failed", true
+		}
+		return "client_deleted", true
 	case method == fiber.MethodPost && strings.HasPrefix(path, "/admin/clients/") && strings.HasSuffix(path, "/revoke-all"):
 		if status >= fiber.StatusBadRequest {
 			return "client_revoke_all_failed", true

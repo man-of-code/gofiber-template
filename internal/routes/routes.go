@@ -41,6 +41,10 @@ func Register(app *fiber.App, deps *Dependencies) {
 	admin := app.Group("/admin")
 	admin.Post("/clients", authHandler.RegisterClient)
 	admin.Post("/clients/:id/revoke-all", authHandler.RevokeAllClientTokens)
+	admin.Get("/clients", authHandler.ListClients)
+	admin.Get("/clients/:id", authHandler.GetClient)
+	admin.Put("/clients/:id", authHandler.UpdateClient)
+	admin.Delete("/clients/:id", authHandler.DeleteClient)
 
 	// Authenticated API (JWT + TokenBinding + APIRateLimit)
 	api := app.Group("/api",

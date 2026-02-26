@@ -29,6 +29,7 @@ func PayloadCrypto(cryptoService *services.CryptoService) fiber.Handler {
 			return fiber.NewError(fiber.StatusBadRequest, "decryption failed")
 		}
 		c.Request().SetBodyStream(bytes.NewReader(pt), len(pt))
+	c.Request().Header.SetContentType(fiber.MIMEApplicationJSON)
 		c.Locals("encrypted_response", true)
 		return c.Next()
 	}

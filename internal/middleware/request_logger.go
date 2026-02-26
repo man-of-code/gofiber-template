@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"log/slog"
 	"time"
 
@@ -19,8 +20,17 @@ func RequestLogger(logger *slog.Logger) fiber.Handler {
 		requestID, _ := c.Locals("request_id").(string)
 		clientID, _ := c.Locals("client_id").(string)
 
-		level := slog.LevelInfo
 		status := c.Response().StatusCode()
+		if err != nil {
+			var fErr *fiber.Error
+			if errors.As(err, &fErr) {
+				status = fErr.Code
+			} else if status == 0 {
+				status = fiber.StatusInternalServerError
+			}
+		}
+
+		level := slog.LevelInfo
 		switch {
 		case status >= fiber.StatusInternalServerError:
 			level = slog.LevelError

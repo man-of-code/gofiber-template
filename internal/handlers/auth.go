@@ -18,6 +18,18 @@ type AuthHandler struct {
 	Config       *config.Config
 }
 
+// requireAdmin validates the X-Admin-Key header when admin functionality is configured.
+func (h *AuthHandler) requireAdmin(c *fiber.Ctx) error {
+	if h.Config.AdminMasterKey == "" {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "admin not configured")
+	}
+	adminKey := c.Get("X-Admin-Key")
+	if !constantTimeEqual(adminKey, h.Config.AdminMasterKey) {
+		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	}
+	return nil
+}
+
 func constantTimeEqual(a, b string) bool {
 	if len(a) != len(b) {
 		return false
@@ -33,12 +45,8 @@ type RegisterClientRequest struct {
 
 // RegisterClient creates a new client (admin only).
 func (h *AuthHandler) RegisterClient(c *fiber.Ctx) error {
-	if h.Config.AdminMasterKey == "" {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "admin not configured")
-	}
-	adminKey := c.Get("X-Admin-Key")
-	if !constantTimeEqual(adminKey, h.Config.AdminMasterKey) {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	if err := h.requireAdmin(c); err != nil {
+		return err
 	}
 
 	var req RegisterClientRequest
@@ -159,12 +167,8 @@ func (h *AuthHandler) RevokeToken(c *fiber.Ctx) error {
 
 // RevokeAllClientTokens revokes all tokens for a client (admin only).
 func (h *AuthHandler) RevokeAllClientTokens(c *fiber.Ctx) error {
-	if h.Config.AdminMasterKey == "" {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "admin not configured")
-	}
-	adminKey := c.Get("X-Admin-Key")
-	if !constantTimeEqual(adminKey, h.Config.AdminMasterKey) {
-		return fiber.NewError(fiber.StatusUnauthorized, "unauthorized")
+	if err := h.requireAdmin(c); err != nil {
+		return err
 	}
 	id, err := validator.ParsePositiveUint(c.Params("id"), "id")
 	if err != nil {
@@ -174,4 +178,128 @@ func (h *AuthHandler) RevokeAllClientTokens(c *fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(fiber.Map{"message": "revoked"})
+}
+
+// ClientResponse represents the admin-facing client data payload.
+type ClientResponse struct {
+	ID         uint     `json:"id"`
+	Name       string   `json:"name"`
+	ClientID   string   `json:"client_id"`
+	AllowedIPs []string `json:"allowed_ips"`
+	Status     string   `json:"status"`
+	CreatedAt  int64    `json:"created_at"`
+	UpdatedAt  int64    `json:"updated_at"`
+}
+
+func toClientResponse(view *services.ClientView) *ClientResponse {
+	if view == nil {
+		return nil
+	}
+	return &ClientResponse{
+		ID:         view.ID,
+		Name:       view.Name,
+		ClientID:   view.ClientID,
+		AllowedIPs: view.AllowedIPs,
+		Status:     view.Status,
+		CreatedAt:  view.CreatedAt.Unix(),
+		UpdatedAt:  view.UpdatedAt.Unix(),
+	}
+}
+
+// ListClients returns all clients (admin only).
+func (h *AuthHandler) ListClients(c *fiber.Ctx) error {
+	if err := h.requireAdmin(c); err != nil {
+		return err
+	}
+	views, err := h.AuthService.ListClients()
+	if err != nil {
+		return err
+	}
+	responses := make([]*ClientResponse, 0, len(views))
+	for _, v := range views {
+		responses = append(responses, toClientResponse(v))
+	}
+	return c.JSON(responses)
+}
+
+// GetClient returns a single client by database ID (admin only).
+func (h *AuthHandler) GetClient(c *fiber.Ctx) error {
+	if err := h.requireAdmin(c); err != nil {
+		return err
+	}
+	id, err := validator.ParsePositiveUint(c.Params("id"), "id")
+	if err != nil {
+		return err
+	}
+	view, err := h.AuthService.GetClient(id)
+	if err != nil {
+		if err == services.ErrClientNotFound {
+			return fiber.NewError(fiber.StatusNotFound, "not found")
+		}
+		return err
+	}
+	return c.JSON(toClientResponse(view))
+}
+
+// UpdateClientRequest is the JSON body for updating a client.
+type UpdateClientRequest struct {
+	Name       string   `json:"name"`
+	AllowedIPs []string `json:"allowed_ips"`
+	Status     string   `json:"status"`
+}
+
+// UpdateClient updates client metadata (admin only).
+func (h *AuthHandler) UpdateClient(c *fiber.Ctx) error {
+	if err := h.requireAdmin(c); err != nil {
+		return err
+	}
+	id, err := validator.ParsePositiveUint(c.Params("id"), "id")
+	if err != nil {
+		return err
+	}
+	var req UpdateClientRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	}
+	if req.Status != "" {
+		switch req.Status {
+		case "active", "suspended", "revoked":
+		default:
+			verr := &validator.Errors{}
+			verr.Add("status", "must be active, suspended, or revoked")
+			return verr
+		}
+	}
+	if req.AllowedIPs == nil {
+		req.AllowedIPs = []string{}
+	}
+	view, err := h.AuthService.UpdateClient(id, req.Name, req.AllowedIPs, req.Status)
+	if err != nil {
+		if err == services.ErrClientNotFound {
+			return fiber.NewError(fiber.StatusNotFound, "not found")
+		}
+		return err
+	}
+	return c.JSON(toClientResponse(view))
+}
+
+// DeleteClient deletes a client and revokes its tokens (admin only).
+func (h *AuthHandler) DeleteClient(c *fiber.Ctx) error {
+	if err := h.requireAdmin(c); err != nil {
+		return err
+	}
+	id, err := validator.ParsePositiveUint(c.Params("id"), "id")
+	if err != nil {
+		return err
+	}
+	if err := h.TokenService.RevokeAllForClient(id); err != nil {
+		return err
+	}
+	if err := h.AuthService.DeleteClient(id); err != nil {
+		if err == services.ErrClientNotFound {
+			return fiber.NewError(fiber.StatusNotFound, "not found")
+		}
+		return err
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }
